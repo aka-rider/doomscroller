@@ -1,0 +1,105 @@
+services:
+  # One-time model downloader — exits after models are cached in the volume
+  model-init:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    volumes:
+      - models:/models
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        LLM=/models/gemma-4-E4B-it-Q4_K_M.gguf
+        EMBED=/models/nomic-embed-text-v2-moe.Q4_K_M.gguf
+        if [ ! -f "$$LLM" ]; then
+          echo "[model-init] Downloading Gemma 4 E4B (~5GB)..."
+          curl -L --progress-bar -o "$$LLM.tmp" \
+            "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf"
+          mv "$$LLM.tmp" "$$LLM"
+        else
+          echo "[model-init] Gemma 4 E4B already cached"
+        fi
+        if [ ! -f "$$EMBED" ]; then
+          echo "[model-init] Downloading Nomic Embed v2 MoE (~328MB)..."
+          curl -L --progress-bar -o "$$EMBED.tmp" \
+            "https://huggingface.co/nomic-ai/nomic-embed-text-v2-moe-GGUF/resolve/main/nomic-embed-text-v2-moe.Q4_K_M.gguf"
+          mv "$$EMBED.tmp" "$$EMBED"
+        else
+          echo "[model-init] Nomic Embed v2 MoE already cached"
+        fi
+        echo "[model-init] All models ready"
+    restart: "no"
+
+  # Main application: RSS reader + API + Web UI
+  doomscroller:
+    build: .
+    ports:
+      - "127.0.0.1:6767:6767"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - PORT=6767
+      - DATA_DIR=/app/data
+      - LLM_BASE_URL=http://llm:8081
+      - LLM_MODEL=gemma-4
+      - EMBEDDINGS_BASE_URL=http://embeddings:8082
+    depends_on:
+      model-init:
+        condition: service_completed_successfully
+      llm:
+        condition: service_started
+      embeddings:
+        condition: service_started
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  # Local LLM inference: llama.cpp with Gemma 4 (unsloth quantized)
+  llm:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    ports:
+      - "127.0.0.1:8081:8081"
+    volumes:
+      - models:/models:ro
+    depends_on:
+      model-init:
+        condition: service_completed_successfully
+    command: >
+      --host 0.0.0.0
+      --port 8081
+      --model /models/gemma-4-E4B-it-Q4_K_M.gguf
+      --ctx-size 8192
+      --threads 4
+      --batch-size 512
+      --n-predict 512
+    restart: unless-stopped
+    # For NVIDIA GPU:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - capabilities: [gpu]
+
+  # Embeddings: llama.cpp with Nomic Embed v2 MoE (multilingual, ~328MB)
+  embeddings:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    ports:
+      - "127.0.0.1:8082:8082"
+    volumes:
+      - models:/models:ro
+    depends_on:
+      model-init:
+        condition: service_completed_successfully
+    command: >
+      --host 0.0.0.0
+      --port 8082
+      --model /models/nomic-embed-text-v2-moe.Q4_K_M.gguf
+      --ctx-size 512
+      --threads 2
+      --batch-size 512
+      --embeddings
+    restart: unless-stopped
+
+volumes:
+  models:
+    driver: local

@@ -1,0 +1,17 @@
+{
+    "name": "doomscroller",
+    "private": true,
+    "workspaces": [
+        "server",
+        "web"
+    ],
+    "scripts": {
+        "dev": "bun run --filter '*' dev",
+        "dev:server": "bun run --filter server dev",
+        "dev:web": "bun run --filter web dev",
+        "build": "bun run --filter web build && bun run --filter server build",
+        "start": "bun run --filter server start",
+        "check": "bun run --filter '*' check",
+        "db:reset": "rm -f data/doomscroller.db && bun run --filter server start"
+    }
+}
