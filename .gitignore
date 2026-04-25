@@ -1,6 +1,7 @@
 node_modules/
 dist/
 data/
+web/public/fonts/
 *.db
 *.db-wal
 *.db-shm

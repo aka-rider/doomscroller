@@ -1,23 +1,19 @@
 import { describe, test, expect, beforeEach } from 'bun:test';
 import { Hono } from 'hono';
-import { createHash } from 'node:crypto';
 import { Database } from 'bun:sqlite';
 import { createFeverRoutes } from './fever';
 import * as queries from '../db/queries';
 import {
-  createTestDb, insertTestFeed, insertTestEntry, insertTestCategory,
+  createTestDb, insertTestFeed, insertTestEntry,
 } from '../test-utils';
-import type { FeedId, EntryId, CategoryId } from '../types';
+import type { FeedId, EntryId, TagId } from '../types';
 
 // ============================================================================
 // GATE 10: Fever API — the mobile client contract
 // Fever is a decade-old protocol. Every major RSS reader speaks it.
 // If this breaks, Reeder/NetNewsWire/Unread are blind.
-// Auth, items, groups, mark actions — all tested against the spec.
+// Auth removed (single-user, local-only) — always auth=1.
 // ============================================================================
-
-const API_KEY = 'test-api-key-0000';
-const API_KEY_MD5 = createHash('md5').update(`doomscroller:${API_KEY}`).digest('hex');
 
 describe('Fever API', () => {
   let db: Database;
@@ -30,11 +26,11 @@ describe('Fever API', () => {
     app.route('/fever', fever);
   });
 
-  const feverGet = (params: string, apiKey = API_KEY_MD5) =>
-    app.request(`http://localhost/fever?api&${params}&api_key=${apiKey}`);
+  const feverGet = (params: string) =>
+    app.request(`http://localhost/fever?api&${params}`);
 
   const feverPost = (params: string, body: Record<string, string> = {}) => {
-    const formBody = new URLSearchParams({ api_key: API_KEY_MD5, ...body });
+    const formBody = new URLSearchParams(body);
     return app.request(`http://localhost/fever?api&${params}`, {
       method: 'POST',
       body: formBody.toString(),
@@ -45,61 +41,90 @@ describe('Fever API', () => {
   // --- Auth ---
 
   describe('Authentication', () => {
-    test('authenticates with MD5 of doomscroller:api_key', async () => {
+    test('always returns auth=1 (no auth in D1)', async () => {
       const res = await feverGet('');
       const data = await res.json() as any;
       expect(data.api_version).toBe(3);
       expect(data.auth).toBe(1);
     });
-
-    test('authenticates with raw API key', async () => {
-      const res = await feverGet('', API_KEY);
-      const data = await res.json() as any;
-      expect(data.auth).toBe(1);
-    });
-
-    test('rejects invalid API key', async () => {
-      const res = await feverGet('', 'wrong-key');
-      const data = await res.json() as any;
-      expect(data.auth).toBe(0);
-    });
-
-    test('returns only api_version and auth=0 when unauthorized', async () => {
-      insertTestFeed(db, { title: 'Should not leak' });
-      const res = await feverGet('feeds', 'wrong-key');
-      const data = await res.json() as any;
-      expect(data.auth).toBe(0);
-      expect(data.feeds).toBeUndefined();
-    });
   });
 
-  // --- Groups (Categories) ---
+  // --- Groups (tags mapped to Fever groups) ---
 
   describe('?groups', () => {
-    test('returns categories as Fever groups', async () => {
-      insertTestCategory(db, { name: 'Tech', slug: 'tech' });
+    test('returns tags as Fever groups', async () => {
+      const tagId = queries.createTag(db, 'politics', 'Politics', 'topic', true);
 
       const res = await feverGet('groups');
       const data = await res.json() as any;
 
-      expect(data.groups).toBeDefined();
-      expect(data.groups.length).toBeGreaterThan(0);
-      expect(data.groups[0].title).toBe('Tech');
-      expect(data.groups[0].id).toBeDefined();
+      expect(data.groups.length).toBeGreaterThanOrEqual(1);
+      const group = data.groups.find((g: any) => g.id === tagId);
+      expect(group).toBeDefined();
+      expect(group.title).toBe('Politics');
     });
 
-    test('returns feeds_groups mapping', async () => {
-      const catId = insertTestCategory(db, { name: 'Tech', slug: 'tech' });
-      const feedId = insertTestFeed(db, { title: 'Tech Feed' });
-      db.run('INSERT INTO feed_categories (feed_id, category_id) VALUES (?, ?)', [feedId, catId]);
+    test('uses slug as title when label is null', async () => {
+      db.run("INSERT INTO tags (slug, label, tag_group, is_builtin) VALUES ('misc', NULL, 'topic', 0)");
+      const tagRow = db.query<{ id: number }, [string]>('SELECT id FROM tags WHERE slug = ?').get('misc')!;
 
       const res = await feverGet('groups');
       const data = await res.json() as any;
 
-      expect(data.feeds_groups).toBeDefined();
-      expect(data.feeds_groups.length).toBeGreaterThan(0);
-      expect(data.feeds_groups[0].group_id).toBe(catId as number);
-      expect(data.feeds_groups[0].feed_ids).toContain(String(feedId));
+      const group = data.groups.find((g: any) => g.id === tagRow.id);
+      expect(group).toBeDefined();
+      expect(group.title).toBe('misc');
+    });
+
+    test('returns empty feeds_groups when no entries are tagged', async () => {
+      queries.createTag(db, 'empty-tag', 'Empty', 'topic', true);
+
+      const res = await feverGet('groups');
+      const data = await res.json() as any;
+
+      expect(data.feeds_groups).toEqual([]);
+    });
+
+    test('returns feeds_groups mapping tags to feeds via entries', async () => {
+      const feedId1 = insertTestFeed(db, { title: 'Feed A' });
+      const feedId2 = insertTestFeed(db, { title: 'Feed B' });
+      const tagId = queries.createTag(db, 'tech', 'Tech', 'topic', true);
+
+      const e1 = insertTestEntry(db, feedId1, { title: 'Entry 1' });
+      const e2 = insertTestEntry(db, feedId2, { title: 'Entry 2' });
+
+      queries.addEntryTag(db, e1, tagId, 'llm');
+      queries.addEntryTag(db, e2, tagId, 'llm');
+
+      const res = await feverGet('groups');
+      const data = await res.json() as any;
+
+      const fg = data.feeds_groups.find((fg: any) => fg.group_id === tagId);
+      expect(fg).toBeDefined();
+      const feedIds = fg.feed_ids.split(',').map(Number);
+      expect(feedIds).toContain(feedId1 as number);
+      expect(feedIds).toContain(feedId2 as number);
+    });
+
+    test('feeds_groups deduplicates feeds with multiple tagged entries', async () => {
+      const feedId = insertTestFeed(db);
+      const tagId = queries.createTag(db, 'science', 'Science', 'topic', true);
+
+      const e1 = insertTestEntry(db, feedId, { title: 'Entry 1' });
+      const e2 = insertTestEntry(db, feedId, { title: 'Entry 2' });
+
+      queries.addEntryTag(db, e1, tagId, 'llm');
+      queries.addEntryTag(db, e2, tagId, 'llm');
+
+      const res = await feverGet('groups');
+      const data = await res.json() as any;
+
+      const fg = data.feeds_groups.find((fg: any) => fg.group_id === tagId);
+      expect(fg).toBeDefined();
+      const feedIds = fg.feed_ids.split(',').map(Number);
+      // Should only appear once despite two entries
+      expect(feedIds.length).toBe(1);
+      expect(feedIds[0]).toBe(feedId as number);
     });
   });
 
@@ -120,10 +145,15 @@ describe('Fever API', () => {
     });
 
     test('also includes feeds_groups', async () => {
-      insertTestFeed(db);
+      const feedId = insertTestFeed(db);
+      const tagId = queries.createTag(db, 'news', 'News', 'topic', true);
+      const entryId = insertTestEntry(db, feedId);
+      queries.addEntryTag(db, entryId, tagId, 'llm');
+
       const res = await feverGet('feeds');
       const data = await res.json() as any;
       expect(data.feeds_groups).toBeDefined();
+      expect(data.feeds_groups.length).toBeGreaterThanOrEqual(1);
     });
   });
 
@@ -284,22 +314,6 @@ describe('Fever API', () => {
       ).get(feedId);
       expect(unread!.c).toBe(0);
     });
-
-    test('mark group as read', async () => {
-      const catId = insertTestCategory(db);
-      const feedId = insertTestFeed(db);
-      db.run('INSERT INTO feed_categories (feed_id, category_id) VALUES (?, ?)', [feedId, catId]);
-
-      const now = Math.floor(Date.now() / 1000);
-      insertTestEntry(db, feedId, { is_read: 0, published_at: now - 100 });
-
-      await feverPost('', { mark: 'group', as: 'read', id: String(catId), before: String(now) });
-
-      const unread = db.query<{ c: number }, [FeedId]>(
-        'SELECT COUNT(*) as c FROM entries WHERE feed_id = ? AND is_read = 0'
-      ).get(feedId);
-      expect(unread!.c).toBe(0);
-    });
   });
 
   // --- Multiple requests in one ---
@@ -307,7 +321,6 @@ describe('Fever API', () => {
   describe('combined requests', () => {
     test('?groups&feeds returns both groups and feeds', async () => {
       insertTestFeed(db, { title: 'F' });
-      insertTestCategory(db, { name: 'G', slug: 'g' });
 
       const res = await feverGet('groups&feeds');
       const data = await res.json() as any;

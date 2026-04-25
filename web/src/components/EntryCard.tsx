@@ -1,17 +1,20 @@
-import { Show } from 'solid-js';
-import type { ScoredEntry } from '../lib/api';
-import { timeAgo, relevanceLevel } from '../lib/api';
+import { Show, For } from 'solid-js';
+import type { EntryWithMeta } from '../lib/api';
+import { timeAgo } from '../lib/api';
+import { TagPill } from './TagPill';
 
 interface EntryCardProps {
-  entry: ScoredEntry;
+  entry: EntryWithMeta;
   onMarkRead: (id: number) => void;
   onStar: (id: number, starred: boolean) => void;
+  onTagClick: (slug: string) => void;
 }
 
 export const EntryCard = (props: EntryCardProps) => {
-  const level = () => relevanceLevel(props.entry.relevance);
   const isRead = () => props.entry.is_read === 1;
   const isStarred = () => props.entry.is_starred === 1;
+  const isUntagged = () => props.entry.tagged_at === null;
+  const entryTags = () => props.entry.tags ?? [];
 
   const handleClick = () => {
     if (!isRead()) {
@@ -25,18 +28,15 @@ export const EntryCard = (props: EntryCardProps) => {
       onClick={handleClick}
     >
       <div class="entry-card-inner">
-        {/* Relevance indicator */}
-        <div class={`relevance-bar relevance-${level()}`} />
-
         <div class="entry-card-content">
-          {/* Meta line: source + time */}
+          {/* Meta line: source · time · author */}
           <div class="meta" style={{ "margin-bottom": "var(--space-1)" }}>
             <span class="meta-source">{props.entry.feed_title}</span>
-            {' '}
+            {' · '}
             <span>{timeAgo(props.entry.published_at)}</span>
             <Show when={props.entry.author}>
-              {' '}
-              <span>by {props.entry.author}</span>
+              {' · '}
+              <span>{props.entry.author}</span>
             </Show>
           </div>
 
@@ -56,40 +56,42 @@ export const EntryCard = (props: EntryCardProps) => {
             <p class="entry-summary">{props.entry.summary.slice(0, 200)}</p>
           </Show>
 
-          {/* Bottom row: score + actions */}
-          <div style={{
-            display: "flex",
-            "align-items": "center",
-            gap: "var(--space-3)",
-            "margin-top": "var(--space-2)",
-          }}>
-            <Show when={props.entry.relevance !== null}>
-              <span
-                class="score"
-                style={{ color: `var(--relevance-${level()})` }}
-                title={props.entry.reasoning ?? ''}
-              >
-                {(props.entry.relevance! * 100).toFixed(0)}%
-              </span>
+          {/* Tag pills row */}
+          <div class="entry-card-tags">
+            <Show when={isUntagged()}>
+              <span class="tag-pill tag-pill--pending">Pending</span>
             </Show>
+            <For each={entryTags()}>
+              {(tag) => (
+                <TagPill
+                  slug={tag.slug}
+                  label={tag.label}
+                  mode={tag.mode as 'none' | 'whitelist' | 'blacklist'}
+                  onClick={props.onTagClick}
+                />
+              )}
+            </For>
+          </div>
 
+          {/* Star toggle */}
+          <div class="entry-card-actions">
             <button
               onClick={(e) => {
                 e.stopPropagation();
                 props.onStar(props.entry.id, !isStarred());
               }}
+              class="entry-card-star"
               style={{
                 color: isStarred() ? 'var(--star)' : 'var(--text-tertiary)',
-                "font-size": "var(--text-sm)",
               }}
-              title={isStarred() ? 'Unstar' : 'Star'}
+              title={isStarred() ? 'Unstar (s)' : 'Star (s)'}
             >
               {isStarred() ? '\u2605' : '\u2606'}
             </button>
           </div>
         </div>
 
-        {/* Hero image */}
+        {/* Thumbnail */}
         <Show when={props.entry.image_url}>
           <img
             src={props.entry.image_url!}

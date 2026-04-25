@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import type { Database } from 'bun:sqlite';
-import type { FeedId, EntryId, CategoryId, AppConfig } from '../types';
+import type { FeedId, EntryId, TagId, Tag, AppConfig } from '../types';
 import * as queries from '../db/queries';
 import { enqueue } from '../jobs/queue';
 
@@ -45,22 +45,39 @@ export const createApiRoutes = (db: Database, config: AppConfig): Hono => {
   const entryListSchema = z.object({
     limit: z.coerce.number().int().min(1).max(200).default(50),
     offset: z.coerce.number().int().min(0).default(0),
-    category: z.coerce.number().int().optional(),
+    tag: z.string().optional(),
     unread: z.enum(['true', 'false']).optional(),
+    filter: z.enum(['preferences']).optional(),
   });
 
   api.get('/entries', (c) => {
     const params = entryListSchema.safeParse(c.req.query());
     if (!params.success) return c.json({ error: params.error.message }, 400);
 
-    const entries = queries.getRankedEntries(db, {
-      limit: params.data.limit,
-      offset: params.data.offset,
-      categoryId: params.data.category as CategoryId | undefined,
-      unreadOnly: params.data.unread === 'true',
-    });
+    let entries;
+    if (params.data.filter === 'preferences') {
+      entries = queries.getVisibleEntries(db, {
+        limit: params.data.limit,
+        offset: params.data.offset,
+        unreadOnly: params.data.unread === 'true',
+      });
+    } else {
+      entries = queries.getEntries(db, {
+        limit: params.data.limit,
+        offset: params.data.offset,
+        tag: params.data.tag,
+        unreadOnly: params.data.unread === 'true',
+      });
+    }
 
-    return c.json(entries);
+    const entryIds = entries.map(e => e.id);
+    const tagMap = queries.getTagsForEntries(db, entryIds);
+    const result = entries.map(e => ({
+      ...e,
+      tags: tagMap.get(e.id) ?? [],
+    }));
+
+    return c.json(result);
   });
 
   api.get('/entries/:id', (c) => {
@@ -73,7 +90,6 @@ export const createApiRoutes = (db: Database, config: AppConfig): Hono => {
   api.post('/entries/:id/read', (c) => {
     const id = Number(c.req.param('id')) as EntryId;
     queries.markEntryRead(db, id);
-    queries.recordInteraction(db, id, 'read');
     return c.json({ ok: true });
   });
 
@@ -83,54 +99,6 @@ export const createApiRoutes = (db: Database, config: AppConfig): Hono => {
     if (!body.success) return c.json({ error: body.error.message }, 400);
 
     queries.markEntryStarred(db, id, body.data.starred);
-    if (body.data.starred) queries.recordInteraction(db, id, 'star');
-    return c.json({ ok: true });
-  });
-
-  api.post('/entries/:id/hide', (c) => {
-    const id = Number(c.req.param('id')) as EntryId;
-    queries.markEntryHidden(db, id);
-    queries.recordInteraction(db, id, 'hide');
-    return c.json({ ok: true });
-  });
-
-  // --- Categories ---
-
-  api.get('/categories', (c) => {
-    const categories = queries.getCategoriesWithCounts(db);
-    return c.json(categories);
-  });
-
-  const addCategorySchema = z.object({
-    name: z.string().min(1).max(100),
-    description: z.string().max(500).default(''),
-  });
-
-  api.post('/categories', async (c) => {
-    const body = addCategorySchema.safeParse(await c.req.json());
-    if (!body.success) return c.json({ error: body.error.message }, 400);
-
-    const slug = body.data.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-    const existing = queries.getCategoryBySlug(db, slug);
-    if (existing) return c.json({ error: 'Category already exists' }, 409);
-
-    const id = queries.insertCategory(db, body.data.name, slug, body.data.description, false);
-    return c.json({ id, slug }, 201);
-  });
-
-  // --- Preferences ---
-
-  api.get('/preferences', (c) => {
-    const prefs = queries.getAllPreferences(db);
-    return c.json(prefs);
-  });
-
-  api.put('/preferences/:key', async (c) => {
-    const key = c.req.param('key');
-    const body = z.object({ value: z.string() }).safeParse(await c.req.json());
-    if (!body.success) return c.json({ error: body.error.message }, 400);
-
-    queries.setPreference(db, key, body.data.value);
     return c.json({ ok: true });
   });
 
@@ -216,6 +184,85 @@ ${outlines}
     }
 
     return c.json({ imported, skipped, errors });
+  });
+
+  // --- Tags ---
+
+  api.get('/tags', (c) => {
+    const tags = queries.getAllTagsWithPreferences(db);
+    const grouped: Record<string, Array<Tag & { mode: string }>> = {};
+    for (const tag of tags) {
+      const group = tag.tag_group || 'other';
+      if (!grouped[group]) grouped[group] = [];
+      grouped[group].push(tag);
+    }
+    return c.json(grouped);
+  });
+
+  const createTagSchema = z.object({
+    slug: z.string().min(1).max(100).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+    label: z.string().min(1).max(200),
+    tag_group: z.string().max(100).default(''),
+  });
+
+  api.post('/tags', async (c) => {
+    const body = createTagSchema.safeParse(await c.req.json());
+    if (!body.success) return c.json({ error: body.error.message }, 400);
+
+    const existing = queries.getTagBySlug(db, body.data.slug);
+    if (existing) return c.json({ error: 'Tag already exists', tag: existing }, 409);
+
+    const id = queries.createTag(db, body.data.slug, body.data.label, body.data.tag_group, false);
+    const tag = queries.getTagById(db, id);
+    return c.json(tag, 201);
+  });
+
+  const setPreferenceSchema = z.object({
+    mode: z.enum(['whitelist', 'blacklist', 'none']),
+  });
+
+  api.delete('/tags/:id', (c) => {
+    const id = Number(c.req.param('id')) as TagId;
+    const tag = queries.getTagById(db, id);
+    if (!tag) return c.json({ error: 'Tag not found' }, 404);
+    if (tag.is_builtin) return c.json({ error: 'Cannot delete builtin tags' }, 400);
+    queries.deleteTag(db, id);
+    return c.json({ ok: true });
+  });
+
+  api.put('/tags/:id/preference', async (c) => {
+    const id = Number(c.req.param('id')) as TagId;
+    const tag = queries.getTagById(db, id);
+    if (!tag) return c.json({ error: 'Tag not found' }, 404);
+
+    const body = setPreferenceSchema.safeParse(await c.req.json());
+    if (!body.success) return c.json({ error: body.error.message }, 400);
+
+    queries.setTagPreference(db, id, body.data.mode);
+    return c.json({ ok: true, tag_id: id, mode: body.data.mode });
+  });
+
+  // --- Onboarding Config ---
+
+  api.get('/config/onboarding', (c) => {
+    const val = queries.getConfig(db, 'onboarding_complete');
+    return c.json({ complete: val === '1' });
+  });
+
+  const onboardingSchema = z.object({
+    preferences: z.record(z.string(), z.enum(['whitelist', 'blacklist', 'none'])),
+  });
+
+  api.post('/config/onboarding', async (c) => {
+    const body = onboardingSchema.safeParse(await c.req.json());
+    if (!body.success) return c.json({ error: body.error.message }, 400);
+
+    for (const [tagIdStr, mode] of Object.entries(body.data.preferences)) {
+      const tagId = Number(tagIdStr) as TagId;
+      queries.setTagPreference(db, tagId, mode);
+    }
+    queries.setConfig(db, 'onboarding_complete', '1');
+    return c.json({ ok: true });
   });
 
   return api;

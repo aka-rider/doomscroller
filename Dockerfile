@@ -45,7 +45,6 @@ ENV PORT=6767
 ENV DATA_DIR=/app/data
 ENV LLM_BASE_URL=http://llm:8081
 ENV LLM_MODEL=gemma-4
-ENV EMBEDDINGS_BASE_URL=http://embeddings:8082
 
 EXPOSE 6767
 
@@ -54,5 +53,5 @@ USER doomscroller
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD bun -e "fetch('http://localhost:6767/health').then(r => process.exit(r.ok ? 0 : 1))"
 
-WORKDIR /app/server
-CMD ["bun", "src/index.ts"]
+WORKDIR /app
+CMD ["bun", "run", "server/src/index.ts"]

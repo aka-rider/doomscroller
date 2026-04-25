@@ -3,6 +3,7 @@ import { serveStatic } from 'hono/bun';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { existsSync, mkdirSync } from 'node:fs';
+import { resolve, join } from 'node:path';
 import type { AppConfig, FeedId } from './types';
 import { DEFAULT_CONFIG } from './types';
 import { initDb, closeDb } from './db/index';
@@ -12,7 +13,7 @@ import { createFeverRoutes } from './api/fever';
 import { startWorker, enqueue, cleanupJobs } from './jobs/queue';
 import { fetchFeed, isNotModified } from './feeds/fetcher';
 import { parseFeed } from './feeds/parser';
-import { scoreBatch } from './scorer/batch';
+import { tagBatch } from './tagger/batch';
 import type { JobHandler } from './jobs/queue';
 
 // --- Config from environment ---
@@ -23,7 +24,6 @@ const config: AppConfig = {
   dataDir: process.env['DATA_DIR'] ?? DEFAULT_CONFIG.dataDir,
   llmBaseUrl: process.env['LLM_BASE_URL'] ?? DEFAULT_CONFIG.llmBaseUrl,
   llmModel: process.env['LLM_MODEL'] ?? DEFAULT_CONFIG.llmModel,
-  embeddingsBaseUrl: process.env['EMBEDDINGS_BASE_URL'] ?? DEFAULT_CONFIG.embeddingsBaseUrl,
 };
 
 // Ensure data directory exists
@@ -36,61 +36,18 @@ if (!existsSync(config.dataDir)) {
 const db = initDb(config);
 console.log(`[init] Database at ${config.dataDir}/doomscroller.db`);
 
-// --- Seed default preferences if empty ---
+// --- Seed built-in tags on first boot ---
 
-const existingProfile = queries.getPreference(db, 'interest_profile');
-if (!existingProfile) {
-  queries.setPreference(db, 'interest_profile', [
-    'STRONG INTERESTS: international politics, geopolitics, macroeconomics, financial markets, software engineering (intermediate-to-expert level), systems programming, distributed systems, science (physics, biology, mathematics), art, design, creative technology',
-    'BLOCK: sports, fashion, celebrity gossip, tabloid politics, "he said she said" political drama, beginner tutorials, "getting started with" content, listicles, SEO-optimized fluff',
-    'DEPTH PREFERENCE: prefer expert-level analysis over surface-level reporting. Minimum depth: 0.4',
-    'NOVELTY: prefer unique angles and breaking developments over rehashed takes',
-  ].join('\n'));
-}
-
-// --- Seed default categories ---
-
-const defaultCategories = [
-  { name: 'Geopolitics', slug: 'geopolitics', desc: 'International relations, foreign policy, diplomacy, conflicts, treaties' },
-  { name: 'Markets', slug: 'markets', desc: 'Financial markets, economics, trading, monetary policy, fiscal policy' },
-  { name: 'Engineering', slug: 'engineering', desc: 'Software engineering, systems programming, distributed systems, databases, infrastructure' },
-  { name: 'Science', slug: 'science', desc: 'Physics, biology, chemistry, mathematics, academic research, papers' },
-  { name: 'Technology', slug: 'technology', desc: 'Tech industry, products, AI/ML, startups, open source' },
-  { name: 'Art & Culture', slug: 'art-culture', desc: 'Visual art, design, architecture, music, literature, creative technology' },
-  { name: 'Long Reads', slug: 'long-reads', desc: 'In-depth investigative journalism, essays, analysis pieces' },
-];
-
-for (const cat of defaultCategories) {
-  const existing = queries.getCategoryBySlug(db, cat.slug);
-  if (!existing) {
-    queries.insertCategory(db, cat.name, cat.slug, cat.desc, false);
-  }
+const seeded = queries.seedBuiltinTags(db);
+if (seeded > 0) {
+  console.log(`[init] Seeded ${seeded} built-in tags`);
 }
 
 // --- Seed starter feeds on first boot ---
 
-const starterFeeds = [
-  // Geopolitics & News
-  'https://feeds.bbci.co.uk/news/world/rss.xml',
-  'https://rss.nytimes.com/services/xml/rss/nyt/World.xml',
-  // Technology
-  'https://hnrss.org/frontpage',
-  'https://lobste.rs/rss',
-  'https://www.theverge.com/rss/index.xml',
-  // Engineering
-  'https://blog.pragmaticengineer.com/rss/',
-  // Science
-  'https://www.nature.com/nature.rss',
-  // Economics / Markets
-  'https://feeds.ft.com/rss/home/us',
-];
-
-const existingFeedCount = db.query<{ c: number }, []>('SELECT COUNT(*) as c FROM feeds').get()!.c;
-if (existingFeedCount === 0) {
-  console.log('[init] First boot — seeding starter feeds');
-  for (const url of starterFeeds) {
-    queries.insertFeed(db, url, '', '');
-  }
+const seededFeeds = queries.seedStarterFeeds(db);
+if (seededFeeds > 0) {
+  console.log(`[init] Seeded ${seededFeeds} starter feeds`);
 }
 
 // --- Job handlers ---
@@ -155,10 +112,6 @@ const handleFetchFeed: JobHandler = async (payloadStr) => {
   }
 };
 
-const handleScoreBatch: JobHandler = async () => {
-  await scoreBatch(db, config);
-};
-
 const handleCleanup: JobHandler = async () => {
   const cleaned = cleanupJobs(db, 86400 * 7); // 7 days
   if (cleaned > 0) console.log(`[cleanup] Removed ${cleaned} old jobs`);
@@ -172,12 +125,16 @@ const handleCleanup: JobHandler = async () => {
   if (result.changes > 0) console.log(`[cleanup] Removed ${result.changes} old read entries`);
 };
 
+const handleTagBatch: JobHandler = async () => {
+  await tagBatch(db, config);
+};
+
 // --- Start job worker ---
 
 const worker = startWorker(db, {
   fetch_feed: handleFetchFeed,
-  score_batch: handleScoreBatch,
   cleanup: handleCleanup,
+  tag_batch: handleTagBatch,
 }, { pollIntervalMs: 1000 });
 
 // --- Schedule recurring jobs ---
@@ -190,19 +147,17 @@ const scheduleFeedFetches = () => {
   console.log(`[scheduler] Queued ${feedIds.length} feed fetches`);
 };
 
-const scheduleScoring = () => {
-  enqueue(db, 'score_batch', {});
-};
-
-// Initial fetch + score on startup
+// Initial fetch on startup
 scheduleFeedFetches();
-scheduleScoring();
 
 // Recurring: fetch all feeds every 30 minutes
 setInterval(scheduleFeedFetches, config.fetchIntervalMin * 60 * 1000);
 
-// Recurring: score new entries every 5 minutes
-setInterval(scheduleScoring, 5 * 60 * 1000);
+// Initial tagging on startup
+enqueue(db, 'tag_batch', {});
+
+// Recurring: tag untagged entries every 5 minutes
+setInterval(() => enqueue(db, 'tag_batch', {}), 5 * 60 * 1000);
 
 // Recurring: cleanup daily
 setInterval(() => enqueue(db, 'cleanup', {}), 86400 * 1000);
@@ -226,9 +181,11 @@ app.route('/fever', createFeverRoutes(db));
 app.get('/health', (c) => c.json({ status: 'ok', uptime: process.uptime() }));
 
 // Static files (SolidJS build output)
-app.use('/*', serveStatic({ root: '../web/dist' }));
+// Resolve relative to this source file so it works regardless of cwd
+const webDist = resolve(join(import.meta.dir, '..', '..', 'web', 'dist'));
+app.use('/*', serveStatic({ root: webDist }));
 // SPA fallback — serve index.html for all non-API routes
-app.get('/*', serveStatic({ root: '../web/dist', path: 'index.html' }));
+app.get('/*', serveStatic({ root: webDist, path: 'index.html' }));
 
 // --- Start ---
 

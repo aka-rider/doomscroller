@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'bun:test';
 import { Ok, Err } from './types';
-import type { Result, FeedId, EntryId, CategoryId } from './types';
+import type { Result, FeedId, EntryId, TagId } from './types';
 
 // ============================================================================
 // GATE 1: Result type — the error handling contract
@@ -77,11 +77,11 @@ describe('Branded ID types', () => {
   test('branded IDs are just numbers at runtime', () => {
     const feedId = 1 as FeedId;
     const entryId = 1 as EntryId;
-    const catId = 1 as CategoryId;
+    const tagId = 1 as TagId;
 
     expect(typeof feedId).toBe('number');
     expect(typeof entryId).toBe('number');
-    expect(typeof catId).toBe('number');
+    expect(typeof tagId).toBe('number');
 
     // They ARE numbers — arithmetic works
     expect(feedId + 1).toBe(2);

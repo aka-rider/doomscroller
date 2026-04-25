@@ -9,7 +9,7 @@ type Brand<T, B extends string> = T & { readonly [__brand]: B };
 
 export type FeedId = Brand<number, 'FeedId'>;
 export type EntryId = Brand<number, 'EntryId'>;
-export type CategoryId = Brand<number, 'CategoryId'>;
+export type TagId = Brand<number, 'TagId'>;
 export type JobId = Brand<number, 'JobId'>;
 
 // --- Result type ---
@@ -41,16 +41,6 @@ export interface Feed {
   readonly created_at: number;
 }
 
-export interface Category {
-  readonly id: CategoryId;
-  readonly name: string;
-  readonly slug: string;
-  readonly description: string;
-  readonly sort_order: number;
-  readonly is_auto: number;
-  readonly created_at: number;
-}
-
 export interface Entry {
   readonly id: EntryId;
   readonly feed_id: FeedId;
@@ -65,24 +55,29 @@ export interface Entry {
   readonly fetched_at: number;
   readonly is_read: number;
   readonly is_starred: number;
-  readonly is_hidden: number;
+  readonly tagged_at: number | null;
 }
 
-export interface EntryScore {
-  readonly entry_id: EntryId;
-  readonly relevance: number;
-  readonly depth: number;
-  readonly novelty: number;
-  readonly category_id: CategoryId | null;
-  readonly reasoning: string;
-  readonly model: string;
-  readonly scored_at: number;
+export interface Tag {
+  readonly id: TagId;
+  readonly slug: string;
+  readonly label: string | null;
+  readonly tag_group: string;
+  readonly is_builtin: number;
+  readonly use_count: number;
+  readonly sort_order: number;
 }
 
-export interface EntryCategory {
+export interface EntryTag {
   readonly entry_id: EntryId;
-  readonly category_id: CategoryId;
-  readonly confidence: number;
+  readonly tag_id: TagId;
+  readonly source: string;
+}
+
+export interface TagPreference {
+  readonly tag_id: TagId;
+  readonly mode: string;
+  readonly updated_at: number;
 }
 
 export interface Job {
@@ -100,27 +95,11 @@ export interface Job {
   readonly created_at: number;
 }
 
-export interface Interaction {
-  readonly id: number;
-  readonly entry_id: EntryId;
-  readonly action: 'read' | 'star' | 'hide' | 'click' | 'skip';
-  readonly duration_sec: number | null;
-  readonly created_at: number;
-}
-
 // --- Composite types for API responses ---
-
-export interface ScoredEntry extends Entry {
-  readonly score: EntryScore | null;
-  readonly feed_title: string;
-  readonly feed_site_url: string;
-  readonly categories: ReadonlyArray<{ name: string; confidence: number }>;
-}
 
 export interface FeedWithStats extends Feed {
   readonly entry_count: number;
   readonly unread_count: number;
-  readonly categories: readonly Category[];
 }
 
 // --- Job payload types ---
@@ -129,31 +108,14 @@ export interface FetchFeedPayload {
   readonly feed_id: FeedId;
 }
 
-export interface ScoreBatchPayload {
+export interface TagBatchPayload {
   readonly entry_ids: readonly EntryId[];
-}
-
-export interface ScoreEntryPayload {
-  readonly entry_id: EntryId;
 }
 
 export type JobPayload =
   | { type: 'fetch_feed'; data: FetchFeedPayload }
-  | { type: 'score_batch'; data: ScoreBatchPayload }
-  | { type: 'score_entry'; data: ScoreEntryPayload }
-  | { type: 'update_preferences'; data: Record<string, never> }
+  | { type: 'tag_batch'; data: TagBatchPayload }
   | { type: 'cleanup'; data: Record<string, never> };
-
-// --- LLM response types ---
-
-export interface LLMClassification {
-  readonly category: string;
-  readonly secondary_categories: readonly string[];
-  readonly relevance: number;
-  readonly depth: number;
-  readonly novelty: number;
-  readonly reasoning: string;
-}
 
 // --- Config ---
 
@@ -162,10 +124,7 @@ export interface AppConfig {
   readonly dataDir: string;
   readonly llmBaseUrl: string;
   readonly llmModel: string;
-  readonly embeddingsBaseUrl: string;
   readonly fetchIntervalMin: number;
-  readonly scoreBatchSize: number;
-  readonly maxConcurrentFetches: number;
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
@@ -173,8 +132,5 @@ export const DEFAULT_CONFIG: AppConfig = {
   dataDir: './data',
   llmBaseUrl: 'http://llm:8081',
   llmModel: 'gemma-4',
-  embeddingsBaseUrl: 'http://embeddings:8082',
   fetchIntervalMin: 30,
-  scoreBatchSize: 15,
-  maxConcurrentFetches: 5,
 };

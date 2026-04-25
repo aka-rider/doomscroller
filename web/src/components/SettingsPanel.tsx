@@ -1,13 +1,14 @@
-import { createSignal, createResource, For, Show, Suspense, batch } from 'solid-js';
+import { createSignal, createResource, For, Show, Suspense } from 'solid-js';
 import { api } from '../lib/api';
-import type { Feed } from '../lib/api';
+import type { Tag } from '../lib/api';
+import { TagPreferenceGrid } from './TagPreferenceGrid';
 
 interface SettingsPanelProps {
   onClose: () => void;
 }
 
 export const SettingsPanel = (props: SettingsPanelProps) => {
-  const [activeTab, setActiveTab] = createSignal<'preferences' | 'feeds' | 'opml'>('preferences');
+  const [activeTab, setActiveTab] = createSignal<'feeds' | 'tags'>('feeds');
 
   return (
     <div class="settings-overlay" onClick={(e) => {
@@ -25,34 +26,25 @@ export const SettingsPanel = (props: SettingsPanelProps) => {
 
         <nav class="settings-tabs">
           <button
-            class={`settings-tab ${activeTab() === 'preferences' ? 'active' : ''}`}
-            onClick={() => setActiveTab('preferences')}
-          >
-            Preferences
-          </button>
-          <button
             class={`settings-tab ${activeTab() === 'feeds' ? 'active' : ''}`}
             onClick={() => setActiveTab('feeds')}
           >
             Feeds
           </button>
           <button
-            class={`settings-tab ${activeTab() === 'opml' ? 'active' : ''}`}
-            onClick={() => setActiveTab('opml')}
+            class={`settings-tab ${activeTab() === 'tags' ? 'active' : ''}`}
+            onClick={() => setActiveTab('tags')}
           >
-            OPML
+            Tags
           </button>
         </nav>
 
         <div class="settings-body">
-          <Show when={activeTab() === 'preferences'}>
-            <PreferencesTab />
-          </Show>
           <Show when={activeTab() === 'feeds'}>
             <FeedsTab />
           </Show>
-          <Show when={activeTab() === 'opml'}>
-            <OpmlTab />
+          <Show when={activeTab() === 'tags'}>
+            <TagsTab />
           </Show>
         </div>
       </div>
@@ -60,89 +52,15 @@ export const SettingsPanel = (props: SettingsPanelProps) => {
   );
 };
 
-// --- Preferences Tab ---
-
-const PreferencesTab = () => {
-  const [prefs, { refetch }] = createResource(() => api.preferences.getAll());
-  const [editing, setEditing] = createSignal(false);
-  const [draft, setDraft] = createSignal('');
-  const [saving, setSaving] = createSignal(false);
-
-  const startEditing = () => {
-    const current = prefs();
-    setDraft(current?.['interest_profile'] ?? '');
-    setEditing(true);
-  };
-
-  const save = async () => {
-    setSaving(true);
-    await api.preferences.set('interest_profile', draft());
-    setSaving(false);
-    setEditing(false);
-    refetch();
-  };
-
-  const cancel = () => {
-    setEditing(false);
-  };
-
-  return (
-    <div>
-      <h3 style={{
-        "font-family": "var(--font-serif)",
-        "font-size": "var(--text-lg)",
-        "margin-bottom": "var(--space-2)",
-      }}>
-        Interest Profile
-      </h3>
-      <p class="meta" style={{ "margin-bottom": "var(--space-4)" }}>
-        Tell the LLM what you care about. This is sent with every scoring prompt.
-      </p>
-
-      <Suspense fallback={<p class="meta">Loading...</p>}>
-        <Show when={!editing()} fallback={
-          <div>
-            <textarea
-              class="pref-textarea"
-              value={draft()}
-              onInput={(e) => setDraft(e.currentTarget.value)}
-              rows={10}
-              spellcheck={false}
-            />
-            <div style={{ display: "flex", gap: "var(--space-2)", "margin-top": "var(--space-3)" }}>
-              <button class="btn btn-primary" onClick={save} disabled={saving()}>
-                {saving() ? 'Saving...' : 'Save'}
-              </button>
-              <button class="btn" onClick={cancel}>Cancel</button>
-            </div>
-          </div>
-        }>
-          <div class="pref-display" onClick={startEditing}>
-            <pre style={{
-              "font-family": "var(--font-sans)",
-              "font-size": "var(--text-sm)",
-              "white-space": "pre-wrap",
-              "word-break": "break-word",
-              "line-height": "1.6",
-              color: "var(--text-secondary)",
-            }}>
-              {prefs()?.['interest_profile'] ?? 'No preferences set yet. Click to edit.'}
-            </pre>
-            <p class="meta" style={{ "margin-top": "var(--space-3)" }}>Click to edit</p>
-          </div>
-        </Show>
-      </Suspense>
-    </div>
-  );
-};
-
-// --- Feeds Tab ---
+// --- Feeds Tab (includes OPML section) ---
 
 const FeedsTab = () => {
   const [feeds, { refetch }] = createResource(() => api.feeds.list());
   const [newUrl, setNewUrl] = createSignal('');
   const [adding, setAdding] = createSignal(false);
   const [error, setError] = createSignal('');
+  const [importing, setImporting] = createSignal(false);
+  const [opmlResult, setOpmlResult] = createSignal('');
 
   const addFeed = async () => {
     const url = newUrl().trim();
@@ -162,6 +80,37 @@ const FeedsTab = () => {
   const removeFeed = async (id: number) => {
     await api.feeds.remove(id);
     refetch();
+  };
+
+  const handleExport = () => {
+    window.open('/api/opml/export', '_blank');
+  };
+
+  const handleImport = async (e: Event) => {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+
+    setImporting(true);
+    setOpmlResult('');
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await fetch('/api/opml/import', {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await res.json() as { imported: number; skipped: number; errors: string[] };
+      setOpmlResult(`Imported ${data.imported} feeds, skipped ${data.skipped}.`);
+      refetch();
+    } catch {
+      setOpmlResult('Failed to import OPML file.');
+    }
+
+    setImporting(false);
+    input.value = '';
   };
 
   return (
@@ -229,45 +178,112 @@ const FeedsTab = () => {
           </For>
         </div>
       </Suspense>
+
+      {/* OPML Section */}
+      <div style={{
+        "margin-top": "var(--space-6)",
+        "padding-top": "var(--space-4)",
+        "border-top": "1px solid var(--border)",
+      }}>
+        <h3 style={{
+          "font-family": "var(--font-serif)",
+          "font-size": "var(--text-lg)",
+          "margin-bottom": "var(--space-4)",
+        }}>
+          OPML Import/Export
+        </h3>
+
+        <div style={{ display: "flex", gap: "var(--space-4)", "align-items": "flex-start" }}>
+          <div style={{ flex: "1" }}>
+            <p class="meta" style={{ "margin-bottom": "var(--space-2)" }}>
+              Download all your feeds as an OPML file.
+            </p>
+            <button class="btn" onClick={handleExport}>Download OPML</button>
+          </div>
+
+          <div style={{ flex: "1" }}>
+            <p class="meta" style={{ "margin-bottom": "var(--space-2)" }}>
+              Import feeds from an OPML file.
+            </p>
+            <label class="btn" style={{ cursor: "pointer" }}>
+              {importing() ? 'Importing...' : 'Choose OPML File'}
+              <input
+                type="file"
+                accept=".opml,.xml"
+                onChange={handleImport}
+                style={{ display: "none" }}
+                disabled={importing()}
+              />
+            </label>
+          </div>
+        </div>
+
+        <Show when={opmlResult()}>
+          <p class="meta" style={{ color: "var(--relevance-high)", "margin-top": "var(--space-3)" }}>
+            {opmlResult()}
+          </p>
+        </Show>
+      </div>
     </div>
   );
 };
 
-// --- OPML Tab ---
+// --- Tags Tab ---
 
-const OpmlTab = () => {
-  const [importing, setImporting] = createSignal(false);
-  const [result, setResult] = createSignal('');
+const TagsTab = () => {
+  const [tags, { refetch }] = createResource(() => api.tags.list());
+  const [newLabel, setNewLabel] = createSignal('');
+  const [creating, setCreating] = createSignal(false);
+  const [error, setError] = createSignal('');
 
-  const handleExport = () => {
-    window.open('/api/opml/export', '_blank');
-  };
-
-  const handleImport = async (e: Event) => {
-    const input = e.target as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!file) return;
-
-    setImporting(true);
-    setResult('');
-
-    const formData = new FormData();
-    formData.append('file', file);
-
-    try {
-      const res = await fetch('/api/opml/import', {
-        method: 'POST',
-        body: formData,
-      });
-      const data = await res.json() as { imported: number; skipped: number; errors: string[] };
-      setResult(`Imported ${data.imported} feeds, skipped ${data.skipped}.`);
-    } catch {
-      setResult('Failed to import OPML file.');
+  const preferences = (): Map<number, string> => {
+    const map = new Map<number, string>();
+    const list = tags();
+    if (list) {
+      for (const tag of list) {
+        map.set(tag.id, tag.mode ?? 'none');
+      }
     }
-
-    setImporting(false);
-    input.value = '';
+    return map;
   };
+
+  const handleToggle = async (tagId: number, mode: string) => {
+    await api.tags.setPreference(tagId, mode);
+    refetch();
+  };
+
+  const slugify = (label: string): string =>
+    label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+  const createTag = async () => {
+    const label = newLabel().trim();
+    if (!label) return;
+    const slug = slugify(label);
+    if (!slug) return;
+    setCreating(true);
+    setError('');
+    try {
+      await api.tags.create(slug, label);
+      setNewLabel('');
+      refetch();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to create tag');
+    }
+    setCreating(false);
+  };
+
+  const deleteTag = async (id: number) => {
+    try {
+      await api.tags.delete(id);
+      refetch();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to delete tag');
+    }
+  };
+
+  const customTags = (): Tag[] => (tags() ?? []).filter(t => !t.is_builtin);
+  const proposedTags = (): Tag[] => customTags().filter(t => t.tag_group === 'proposed');
+  const userTags = (): Tag[] => customTags().filter(t => t.tag_group !== 'proposed');
 
   return (
     <div>
@@ -276,43 +292,135 @@ const OpmlTab = () => {
         "font-size": "var(--text-lg)",
         "margin-bottom": "var(--space-4)",
       }}>
-        OPML Import/Export
+        Tag Preferences
       </h3>
 
-      <div style={{ display: "flex", "flex-direction": "column", gap: "var(--space-4)" }}>
-        <div>
-          <h4 style={{ "font-size": "var(--text-sm)", "font-weight": "500", "margin-bottom": "var(--space-2)" }}>
-            Export
-          </h4>
-          <p class="meta" style={{ "margin-bottom": "var(--space-2)" }}>
-            Download all your feeds as an OPML file.
-          </p>
-          <button class="btn" onClick={handleExport}>Download OPML</button>
+      <Suspense fallback={<p class="meta">Loading tags...</p>}>
+        <Show when={tags()}>
+          <TagPreferenceGrid
+            tags={tags()!}
+            preferences={preferences()}
+            onToggle={handleToggle}
+          />
+        </Show>
+      </Suspense>
+
+      {/* Custom tag creation */}
+      <div style={{
+        "margin-top": "var(--space-6)",
+        "padding-top": "var(--space-4)",
+        "border-top": "1px solid var(--border)",
+      }}>
+        <h3 style={{
+          "font-family": "var(--font-serif)",
+          "font-size": "var(--text-lg)",
+          "margin-bottom": "var(--space-4)",
+        }}>
+          Create Custom Tag
+        </h3>
+
+        <div style={{ display: "flex", gap: "var(--space-2)", "margin-bottom": "var(--space-3)" }}>
+          <input
+            class="settings-input"
+            type="text"
+            placeholder="Tag label, e.g. Machine Learning"
+            value={newLabel()}
+            onInput={(e) => setNewLabel(e.currentTarget.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') createTag(); }}
+            style={{ flex: "1" }}
+          />
+          <button class="btn btn-primary" onClick={createTag} disabled={creating()}>
+            {creating() ? 'Creating...' : 'Create'}
+          </button>
         </div>
 
-        <div>
-          <h4 style={{ "font-size": "var(--text-sm)", "font-weight": "500", "margin-bottom": "var(--space-2)" }}>
-            Import
-          </h4>
-          <p class="meta" style={{ "margin-bottom": "var(--space-2)" }}>
-            Import feeds from an OPML file (from Feedly, Reeder, etc.)
+        <Show when={error()}>
+          <p class="meta" style={{ color: "var(--danger)", "margin-bottom": "var(--space-3)" }}>
+            {error()}
           </p>
-          <label class="btn" style={{ cursor: "pointer" }}>
-            {importing() ? 'Importing...' : 'Choose OPML File'}
-            <input
-              type="file"
-              accept=".opml,.xml"
-              onChange={handleImport}
-              style={{ display: "none" }}
-              disabled={importing()}
-            />
-          </label>
-        </div>
-
-        <Show when={result()}>
-          <p class="meta" style={{ color: "var(--relevance-high)" }}>{result()}</p>
         </Show>
       </div>
+
+      {/* User custom tags */}
+      <Show when={userTags().length > 0}>
+        <div style={{
+          "margin-top": "var(--space-4)",
+          "padding-top": "var(--space-4)",
+          "border-top": "1px solid var(--border)",
+        }}>
+          <h3 style={{
+            "font-family": "var(--font-serif)",
+            "font-size": "var(--text-lg)",
+            "margin-bottom": "var(--space-3)",
+          }}>
+            Custom Tags
+          </h3>
+          <div class="feed-list">
+            <For each={userTags()}>
+              {(tag) => (
+                <div class="feed-row">
+                  <div style={{ flex: "1" }}>
+                    <span style={{ "font-size": "var(--text-sm)", "font-weight": "500" }}>{tag.label}</span>
+                    <span class="meta" style={{ "margin-left": "var(--space-2)" }}>
+                      {tag.use_count} uses
+                    </span>
+                  </div>
+                  <button
+                    class="btn"
+                    style={{ "font-size": "var(--text-xs)", color: "var(--danger)" }}
+                    onClick={() => deleteTag(tag.id)}
+                    title="Delete tag"
+                  >
+                    Delete
+                  </button>
+                </div>
+              )}
+            </For>
+          </div>
+        </div>
+      </Show>
+
+      {/* Proposed tags */}
+      <Show when={proposedTags().length > 0}>
+        <div style={{
+          "margin-top": "var(--space-4)",
+          "padding-top": "var(--space-4)",
+          "border-top": "1px solid var(--border)",
+        }}>
+          <h3 style={{
+            "font-family": "var(--font-serif)",
+            "font-size": "var(--text-lg)",
+            "margin-bottom": "var(--space-3)",
+          }}>
+            Proposed Tags
+          </h3>
+          <p class="meta" style={{ "margin-bottom": "var(--space-3)" }}>
+            Tags suggested by the LLM that aren't built-in. Remove ones you don't want.
+          </p>
+          <div class="feed-list">
+            <For each={proposedTags()}>
+              {(tag) => (
+                <div class="feed-row">
+                  <div style={{ flex: "1" }}>
+                    <span style={{ "font-size": "var(--text-sm)", "font-weight": "500" }}>{tag.label}</span>
+                    <span class="meta" style={{ "margin-left": "var(--space-2)" }}>
+                      {tag.use_count} uses
+                    </span>
+                  </div>
+                  <button
+                    class="btn"
+                    style={{ "font-size": "var(--text-xs)", color: "var(--danger)" }}
+                    onClick={() => deleteTag(tag.id)}
+                    title="Delete tag"
+                  >
+                    Delete
+                  </button>
+                </div>
+              )}
+            </For>
+          </div>
+        </div>
+      </Show>
     </div>
   );
 };

@@ -9,22 +9,22 @@ services:
       - |
         set -e
         LLM=/models/gemma-4-E4B-it-Q4_K_M.gguf
-        EMBED=/models/nomic-embed-text-v2-moe.Q4_K_M.gguf
-        if [ ! -f "$$LLM" ]; then
+        LLM_URL="https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf"
+
+        if [ -f "$$LLM" ]; then
+          SIZE=$$(stat -c%s "$$LLM" 2>/dev/null || stat -f%z "$$LLM" 2>/dev/null || echo 0)
+          if [ "$$SIZE" -gt 1000000000 ]; then
+            echo "[model-init] Gemma 4 E4B already cached ($$(echo "$$SIZE / 1048576" | bc)MB)"
+          else
+            echo "[model-init] Gemma 4 E4B incomplete, re-downloading..."
+            rm -f "$$LLM"
+            curl -C - -L --progress-bar -o "$$LLM.tmp" "$$LLM_URL"
+            mv "$$LLM.tmp" "$$LLM"
+          fi
+        else
           echo "[model-init] Downloading Gemma 4 E4B (~5GB)..."
-          curl -L --progress-bar -o "$$LLM.tmp" \
-            "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf"
+          curl -C - -L --progress-bar -o "$$LLM.tmp" "$$LLM_URL"
           mv "$$LLM.tmp" "$$LLM"
-        else
-          echo "[model-init] Gemma 4 E4B already cached"
-        fi
-        if [ ! -f "$$EMBED" ]; then
-          echo "[model-init] Downloading Nomic Embed v2 MoE (~328MB)..."
-          curl -L --progress-bar -o "$$EMBED.tmp" \
-            "https://huggingface.co/nomic-ai/nomic-embed-text-v2-moe-GGUF/resolve/main/nomic-embed-text-v2-moe.Q4_K_M.gguf"
-          mv "$$EMBED.tmp" "$$EMBED"
-        else
-          echo "[model-init] Nomic Embed v2 MoE already cached"
         fi
         echo "[model-init] All models ready"
     restart: "no"
@@ -33,7 +33,7 @@ services:
   doomscroller:
     build: .
     ports:
-      - "127.0.0.1:6767:6767"
+      - "6767:6767"
     volumes:
       - ./data:/app/data
     environment:
@@ -41,13 +41,10 @@ services:
       - DATA_DIR=/app/data
       - LLM_BASE_URL=http://llm:8081
       - LLM_MODEL=gemma-4
-      - EMBEDDINGS_BASE_URL=http://embeddings:8082
     depends_on:
       model-init:
         condition: service_completed_successfully
       llm:
-        condition: service_started
-      embeddings:
         condition: service_started
     restart: unless-stopped
     read_only: true
@@ -58,7 +55,7 @@ services:
   llm:
     image: ghcr.io/ggml-org/llama.cpp:server
     ports:
-      - "127.0.0.1:8081:8081"
+      - "8081:8081"
     volumes:
       - models:/models:ro
     depends_on:
@@ -80,25 +77,6 @@ services:
     #       devices:
     #         - capabilities: [gpu]
 
-  # Embeddings: llama.cpp with Nomic Embed v2 MoE (multilingual, ~328MB)
-  embeddings:
-    image: ghcr.io/ggml-org/llama.cpp:server
-    ports:
-      - "127.0.0.1:8082:8082"
-    volumes:
-      - models:/models:ro
-    depends_on:
-      model-init:
-        condition: service_completed_successfully
-    command: >
-      --host 0.0.0.0
-      --port 8082
-      --model /models/nomic-embed-text-v2-moe.Q4_K_M.gguf
-      --ctx-size 512
-      --threads 2
-      --batch-size 512
-      --embeddings
-    restart: unless-stopped
 
 volumes:
   models:

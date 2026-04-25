@@ -1,7 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { randomBytes } from 'node:crypto';
 import type { AppConfig } from '../types';
 
 let db: Database | null = null;
@@ -26,7 +25,6 @@ export const initDb = (config: AppConfig): Database => {
   db.exec('PRAGMA temp_store = MEMORY');
 
   applySchema(db);
-  ensureFeverApiKey(db);
 
   return db;
 };
@@ -35,18 +33,6 @@ const applySchema = (db: Database): void => {
   const schemaPath = join(import.meta.dir, 'schema.sql');
   const schema = readFileSync(schemaPath, 'utf-8');
   db.exec(schema);
-};
-
-const ensureFeverApiKey = (db: Database): void => {
-  const existing = db.query<{ value: string }, []>(
-    "SELECT value FROM config WHERE key = 'fever_api_key'"
-  ).get();
-
-  if (!existing) {
-    const key = randomBytes(32).toString('hex');
-    db.run("INSERT INTO config (key, value) VALUES ('fever_api_key', ?)", [key]);
-    console.log(`[db] Generated Fever API key: ${key}`);
-  }
 };
 
 export const closeDb = (): void => {

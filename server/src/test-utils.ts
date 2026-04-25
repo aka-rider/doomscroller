@@ -5,7 +5,7 @@ import { Database } from 'bun:sqlite';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type {
-  FeedId, EntryId, CategoryId, AppConfig, Entry, Feed, Category,
+  FeedId, EntryId, AppConfig, Entry, Feed,
 } from './types';
 
 // --- In-memory database factory ---
@@ -25,9 +25,6 @@ export const createTestDb = (): Database => {
   const schema = readFileSync(schemaPath, 'utf-8');
   db.exec(schema);
 
-  // Seed a Fever API key (required by some tests)
-  db.run("INSERT INTO config (key, value) VALUES ('fever_api_key', 'test-api-key-0000')");
-
   return db;
 };
 
@@ -39,8 +36,6 @@ export const TEST_CONFIG: AppConfig = {
   llmBaseUrl: 'http://localhost:11434',
   llmModel: 'test-model',
   fetchIntervalMin: 30,
-  scoreBatchSize: 10,
-  maxConcurrentFetches: 2,
 };
 
 // --- Fixture factories ---
@@ -67,13 +62,14 @@ export const insertTestEntry = (
   overrides: Partial<{
     guid: string; url: string; title: string; author: string;
     content_html: string; summary: string; image_url: string | null;
-    published_at: number | null; is_read: number; is_starred: number; is_hidden: number;
+    published_at: number | null; is_read: number; is_starred: number;
+    tagged_at: number | null;
   }> = {},
 ): EntryId => {
   const guid = overrides.guid ?? `guid-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
   const result = db.run(
-    `INSERT INTO entries (feed_id, guid, url, title, author, content_html, summary, image_url, published_at, is_read, is_starred, is_hidden)
+    `INSERT INTO entries (feed_id, guid, url, title, author, content_html, summary, image_url, published_at, is_read, is_starred, tagged_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       feedId,
@@ -87,47 +83,10 @@ export const insertTestEntry = (
       overrides.published_at ?? Math.floor(Date.now() / 1000),
       overrides.is_read ?? 0,
       overrides.is_starred ?? 0,
-      overrides.is_hidden ?? 0,
+      overrides.tagged_at ?? null,
     ],
   );
   return result.lastInsertRowid as unknown as EntryId;
-};
-
-export const insertTestCategory = (
-  db: Database,
-  overrides: Partial<{ name: string; slug: string; description: string; is_auto: boolean }> = {},
-): CategoryId => {
-  const name = overrides.name ?? `Category ${Math.random().toString(36).slice(2)}`;
-  const slug = overrides.slug ?? name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-
-  const result = db.run(
-    'INSERT INTO categories (name, slug, description, is_auto) VALUES (?, ?, ?, ?)',
-    [name, slug, overrides.description ?? '', overrides.is_auto ? 1 : 0],
-  );
-  return result.lastInsertRowid as unknown as CategoryId;
-};
-
-export const insertTestScore = (
-  db: Database,
-  entryId: EntryId,
-  overrides: Partial<{
-    relevance: number; depth: number; novelty: number;
-    category_id: CategoryId | null; reasoning: string; model: string;
-  }> = {},
-): void => {
-  db.run(
-    `INSERT INTO entry_scores (entry_id, relevance, depth, novelty, category_id, reasoning, model)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [
-      entryId,
-      overrides.relevance ?? 0.7,
-      overrides.depth ?? 0.5,
-      overrides.novelty ?? 0.6,
-      overrides.category_id ?? null,
-      overrides.reasoning ?? 'test reasoning',
-      overrides.model ?? 'test-model',
-    ],
-  );
 };
 
 // --- RSS/Atom feed fixtures ---
@@ -211,30 +170,6 @@ export const EMPTY_FEED = `<?xml version="1.0" encoding="UTF-8"?>
     <description>No items here</description>
   </channel>
 </rss>`;
-
-// --- LLM response fixtures ---
-
-export const VALID_LLM_CLASSIFICATION = JSON.stringify({
-  category: 'Technology',
-  secondary_categories: ['Science'],
-  relevance: 0.85,
-  depth: 0.6,
-  novelty: 0.7,
-  reasoning: 'Article discusses cutting-edge tech research',
-});
-
-export const LLM_CLASSIFICATION_WITH_FENCES = '```json\n' + VALID_LLM_CLASSIFICATION + '\n```';
-
-export const LLM_CLASSIFICATION_INVALID_RANGE = JSON.stringify({
-  category: 'Technology',
-  secondary_categories: [],
-  relevance: 1.5, // out of range
-  depth: 0.5,
-  novelty: 0.5,
-  reasoning: 'test',
-});
-
-export const LLM_GARBAGE = 'I think this article is about technology and it seems very relevant to your interests...';
 
 // --- Mock HTTP server for fetch tests ---
 

@@ -1,7 +1,6 @@
 import { Database } from 'bun:sqlite';
 import type {
-  Feed, FeedId, Entry, EntryId, Category, CategoryId,
-  EntryScore, ScoredEntry, FeedWithStats, Interaction,
+  Feed, FeedId, Entry, EntryId, Tag, TagId, TagPreference, FeedWithStats,
 } from '../types';
 
 // All query functions take db as first arg — no hidden global state.
@@ -91,62 +90,31 @@ export const insertEntry = (
   }
 };
 
-export const getUnscoredEntryIds = (db: Database, limit: number): EntryId[] =>
-  db.query<{ id: EntryId }, [number]>(
-    `SELECT e.id FROM entries e
-     LEFT JOIN entry_scores s ON e.id = s.entry_id
-     WHERE s.entry_id IS NULL
-     ORDER BY e.published_at DESC
-     LIMIT ?`
-  ).all(limit).map(r => r.id);
-
-export const getEntriesForScoring = (db: Database, ids: readonly EntryId[]): Array<Pick<Entry, 'id' | 'title' | 'summary' | 'url'> & { feed_title: string }> => {
-  if (ids.length === 0) return [];
-  const placeholders = ids.map(() => '?').join(',');
-  return db.query<
-    Pick<Entry, 'id' | 'title' | 'summary' | 'url'> & { feed_title: string },
-    EntryId[]
-  >(
-    `SELECT e.id, e.title, e.summary, e.url, f.title as feed_title
-     FROM entries e JOIN feeds f ON e.feed_id = f.id
-     WHERE e.id IN (${placeholders})`
-  ).all(...ids);
-};
-
-export const getRankedEntries = (
+export const getEntries = (
   db: Database,
-  opts: { limit: number; offset: number; categoryId?: CategoryId; unreadOnly?: boolean },
-): ScoredEntry[] => {
-  const conditions: string[] = ['e.is_hidden = 0'];
+  opts: { limit: number; offset: number; tag?: string; unreadOnly?: boolean },
+): Array<Entry & { feed_title: string; feed_site_url: string }> => {
+  const conditions: string[] = [];
   const params: unknown[] = [];
 
   if (opts.unreadOnly) {
     conditions.push('e.is_read = 0');
   }
-  if (opts.categoryId !== undefined) {
-    conditions.push('s.category_id = ?');
-    params.push(opts.categoryId);
+  if (opts.tag) {
+    conditions.push('EXISTS (SELECT 1 FROM entry_tags et JOIN tags t ON et.tag_id = t.id WHERE et.entry_id = e.id AND t.slug = ?)');
+    params.push(opts.tag);
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
   params.push(opts.limit, opts.offset);
 
-  // Rank = relevance * recency_decay.
-  // Recency: entries from last 6h get full weight, decays over 72h to 0.2 floor.
-  return db.query<ScoredEntry, unknown[]>(
-    `SELECT
-      e.*,
-      s.relevance, s.depth, s.novelty, s.category_id, s.reasoning, s.model, s.scored_at,
-      f.title as feed_title, f.site_url as feed_site_url,
-      COALESCE(s.relevance, 0.5) *
-        MAX(0.2, 1.0 - (unixepoch() - COALESCE(e.published_at, e.fetched_at)) / 259200.0)
-        AS rank_score
+  return db.query<Entry & { feed_title: string; feed_site_url: string }, unknown[]>(
+    `SELECT e.*, f.title as feed_title, f.site_url as feed_site_url
      FROM entries e
-     LEFT JOIN entry_scores s ON e.id = s.entry_id
      JOIN feeds f ON e.feed_id = f.id
      ${where}
-     ORDER BY rank_score DESC
+     ORDER BY e.published_at DESC
      LIMIT ? OFFSET ?`
   ).all(...params);
 };
@@ -172,91 +140,160 @@ export const markEntryStarred = (db: Database, id: EntryId, starred: boolean): v
   db.run('UPDATE entries SET is_starred = ? WHERE id = ?', [starred ? 1 : 0, id]);
 };
 
-export const markEntryHidden = (db: Database, id: EntryId): void => {
-  db.run('UPDATE entries SET is_hidden = 1 WHERE id = ?', [id]);
-};
+// --- Tags ---
 
-// --- Scores ---
+export const getAllTags = (db: Database): Tag[] =>
+  db.query<Tag, []>('SELECT * FROM tags ORDER BY sort_order ASC, slug ASC').all();
 
-export const upsertEntryScore = (db: Database, score: Omit<EntryScore, 'scored_at'>): void => {
-  db.run(
-    `INSERT INTO entry_scores (entry_id, relevance, depth, novelty, category_id, reasoning, model)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(entry_id) DO UPDATE SET
-       relevance=excluded.relevance, depth=excluded.depth, novelty=excluded.novelty,
-       category_id=excluded.category_id, reasoning=excluded.reasoning, model=excluded.model,
-       scored_at=unixepoch()`,
-    [score.entry_id, score.relevance, score.depth, score.novelty, score.category_id, score.reasoning, score.model]
-  );
-};
-
-export const upsertEntryCategory = (db: Database, entryId: EntryId, categoryId: CategoryId, confidence: number): void => {
-  db.run(
-    `INSERT INTO entry_categories (entry_id, category_id, confidence) VALUES (?, ?, ?)
-     ON CONFLICT(entry_id, category_id) DO UPDATE SET confidence=excluded.confidence`,
-    [entryId, categoryId, confidence]
-  );
-};
-
-// --- Categories ---
-
-export const getAllCategories = (db: Database): Category[] =>
-  db.query<Category, []>('SELECT * FROM categories ORDER BY sort_order ASC, name ASC').all();
-
-export const getCategoryBySlug = (db: Database, slug: string): Category | null =>
-  db.query<Category, [string]>('SELECT * FROM categories WHERE slug = ?').get(slug);
-
-export const getCategoryByName = (db: Database, name: string): Category | null =>
-  db.query<Category, [string]>('SELECT * FROM categories WHERE name = ?').get(name);
-
-export const insertCategory = (db: Database, name: string, slug: string, description: string, isAuto: boolean): CategoryId => {
-  const result = db.run(
-    'INSERT INTO categories (name, slug, description, is_auto) VALUES (?, ?, ?, ?)',
-    [name, slug, description, isAuto ? 1 : 0]
-  );
-  return result.lastInsertRowid as unknown as CategoryId;
-};
-
-export const getCategoriesWithCounts = (db: Database): Array<Category & { entry_count: number }> =>
-  db.query<Category & { entry_count: number }, []>(
-    `SELECT c.*, COUNT(ec.entry_id) as entry_count
-     FROM categories c
-     LEFT JOIN entry_categories ec ON c.id = ec.category_id
-     GROUP BY c.id
-     ORDER BY c.sort_order ASC, c.name ASC`
+export const getAllTagsWithPreferences = (db: Database): Array<Tag & { mode: string }> =>
+  db.query<Tag & { mode: string }, []>(
+    `SELECT t.*, COALESCE(tp.mode, 'none') as mode
+     FROM tags t
+     LEFT JOIN tag_preferences tp ON t.id = tp.tag_id
+     ORDER BY t.sort_order ASC, t.slug ASC`
   ).all();
 
-// --- Interactions ---
+export const getTagById = (db: Database, id: TagId): Tag | null =>
+  db.query<Tag, [TagId]>('SELECT * FROM tags WHERE id = ?').get(id);
 
-export const recordInteraction = (db: Database, entryId: EntryId, action: Interaction['action'], durationSec?: number): void => {
+export const getTagBySlug = (db: Database, slug: string): Tag | null =>
+  db.query<Tag, [string]>('SELECT * FROM tags WHERE slug = ?').get(slug);
+
+export const getAllTagSlugs = (db: Database): string[] =>
+  db.query<{ slug: string }, []>('SELECT slug FROM tags ORDER BY slug ASC').all().map(r => r.slug);
+
+export const createTag = (
+  db: Database,
+  slug: string,
+  label: string,
+  tagGroup: string,
+  isBuiltin: boolean,
+): TagId => {
+  const result = db.run(
+    'INSERT INTO tags (slug, label, tag_group, is_builtin) VALUES (?, ?, ?, ?)',
+    [slug, label, tagGroup, isBuiltin ? 1 : 0],
+  );
+  return result.lastInsertRowid as unknown as TagId;
+};
+
+export const deleteTag = (db: Database, id: TagId): void => {
+  db.run('DELETE FROM tags WHERE id = ?', [id]);
+};
+
+export const incrementTagUseCount = (db: Database, tagId: TagId): void => {
+  db.run('UPDATE tags SET use_count = use_count + 1 WHERE id = ?', [tagId]);
+};
+
+// --- Tag Preferences ---
+
+export const setTagPreference = (db: Database, tagId: TagId, mode: string): void => {
   db.run(
-    'INSERT INTO interactions (entry_id, action, duration_sec) VALUES (?, ?, ?)',
-    [entryId, action, durationSec ?? null]
+    'INSERT OR REPLACE INTO tag_preferences (tag_id, mode, updated_at) VALUES (?, ?, unixepoch())',
+    [tagId, mode],
   );
 };
 
-// --- Preferences ---
+export const getTagPreferences = (db: Database): TagPreference[] =>
+  db.query<TagPreference, []>('SELECT * FROM tag_preferences').all();
 
-export const getPreference = (db: Database, key: string): string | null => {
-  const row = db.query<{ value: string }, [string]>('SELECT value FROM preferences WHERE key = ?').get(key);
-  return row?.value ?? null;
-};
+export const getPreferenceForTag = (db: Database, tagId: TagId): TagPreference | null =>
+  db.query<TagPreference, [TagId]>('SELECT * FROM tag_preferences WHERE tag_id = ?').get(tagId);
 
-export const setPreference = (db: Database, key: string, value: string): void => {
+// --- Entry-Tag Associations ---
+
+export const addEntryTag = (db: Database, entryId: EntryId, tagId: TagId, source: string): void => {
   db.run(
-    `INSERT INTO preferences (key, value, updated_at) VALUES (?, ?, unixepoch())
-     ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=unixepoch()`,
-    [key, value]
+    'INSERT OR IGNORE INTO entry_tags (entry_id, tag_id, source) VALUES (?, ?, ?)',
+    [entryId, tagId, source],
   );
 };
 
-export const getAllPreferences = (db: Database): Record<string, string> => {
-  const rows = db.query<{ key: string; value: string }, []>('SELECT key, value FROM preferences').all();
-  const prefs: Record<string, string> = {};
+export const getTagsForEntry = (db: Database, entryId: EntryId): Tag[] =>
+  db.query<Tag, [EntryId]>(
+    'SELECT t.* FROM tags t JOIN entry_tags et ON t.id = et.tag_id WHERE et.entry_id = ? ORDER BY t.slug ASC',
+  ).all(entryId);
+
+export const getTagsForEntries = (
+  db: Database,
+  entryIds: EntryId[],
+): Map<EntryId, Array<{ slug: string; label: string; mode: string }>> => {
+  if (entryIds.length === 0) return new Map();
+
+  const placeholders = entryIds.map(() => '?').join(', ');
+  const rows = db.query<
+    { entry_id: EntryId; slug: string; label: string; mode: string },
+    unknown[]
+  >(
+    `SELECT et.entry_id, t.slug, COALESCE(t.label, t.slug) as label, COALESCE(tp.mode, 'none') as mode
+     FROM entry_tags et
+     JOIN tags t ON et.tag_id = t.id
+     LEFT JOIN tag_preferences tp ON t.id = tp.tag_id
+     WHERE et.entry_id IN (${placeholders})
+     ORDER BY t.slug ASC`
+  ).all(...entryIds);
+
+  const map = new Map<EntryId, Array<{ slug: string; label: string; mode: string }>>();
   for (const row of rows) {
-    prefs[row.key] = row.value;
+    let list = map.get(row.entry_id);
+    if (!list) {
+      list = [];
+      map.set(row.entry_id, list);
+    }
+    list.push({ slug: row.slug, label: row.label, mode: row.mode });
   }
-  return prefs;
+  return map;
+};
+
+export const getEntriesByTag = (db: Database, tagId: TagId, limit: number, offset: number): Entry[] =>
+  db.query<Entry, [TagId, number, number]>(
+    'SELECT e.* FROM entries e JOIN entry_tags et ON e.id = et.entry_id WHERE et.tag_id = ? ORDER BY e.published_at DESC LIMIT ? OFFSET ?',
+  ).all(tagId, limit, offset);
+
+// --- Entry Visibility ---
+// An entry is visible if:
+//   - It has no tags in entry_tags (untagged or tagged_at IS NULL)
+//   - OR at least one of its tags is NOT blacklisted (whitelist, none, or no preference)
+// Hidden only if ALL tags are blacklisted.
+
+export const getVisibleEntries = (
+  db: Database,
+  opts: { limit: number; offset: number; unreadOnly?: boolean },
+): Array<Entry & { feed_title: string; feed_site_url: string }> => {
+  const conditions: string[] = [
+    `(NOT EXISTS (SELECT 1 FROM entry_tags WHERE entry_id = e.id)
+     OR EXISTS (
+       SELECT 1 FROM entry_tags et
+       LEFT JOIN tag_preferences tp ON et.tag_id = tp.tag_id
+       WHERE et.entry_id = e.id AND (tp.mode IS NULL OR tp.mode != 'blacklist')
+     ))`,
+  ];
+  const params: unknown[] = [];
+
+  if (opts.unreadOnly) {
+    conditions.push('e.is_read = 0');
+  }
+
+  params.push(opts.limit, opts.offset);
+
+  return db.query<Entry & { feed_title: string; feed_site_url: string }, unknown[]>(
+    `SELECT e.*, f.title as feed_title, f.site_url as feed_site_url
+     FROM entries e
+     JOIN feeds f ON e.feed_id = f.id
+     WHERE ${conditions.join(' AND ')}
+     ORDER BY e.published_at DESC
+     LIMIT ? OFFSET ?`,
+  ).all(...params);
+};
+
+// --- Untagged Entries ---
+
+export const getUntaggedEntryIds = (db: Database, limit: number): EntryId[] =>
+  db.query<{ id: EntryId }, [number]>(
+    'SELECT id FROM entries WHERE tagged_at IS NULL ORDER BY published_at DESC LIMIT ?',
+  ).all(limit).map(r => r.id);
+
+export const markEntryTagged = (db: Database, id: EntryId): void => {
+  db.run('UPDATE entries SET tagged_at = unixepoch() WHERE id = ?', [id]);
 };
 
 // --- Config ---
@@ -266,52 +303,197 @@ export const getConfig = (db: Database, key: string): string | null => {
   return row?.value ?? null;
 };
 
+export const setConfig = (db: Database, key: string, value: string): void => {
+  db.run('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)', [key, value]);
+};
+
 // --- Stats ---
 
 export const getStats = (db: Database): {
   total_feeds: number;
   total_entries: number;
   unread_entries: number;
-  scored_entries: number;
+  tagged_entries: number;
   pending_jobs: number;
 } => {
   const total_feeds = db.query<{ c: number }, []>('SELECT COUNT(*) as c FROM feeds').get()!.c;
   const total_entries = db.query<{ c: number }, []>('SELECT COUNT(*) as c FROM entries').get()!.c;
   const unread_entries = db.query<{ c: number }, []>('SELECT COUNT(*) as c FROM entries WHERE is_read = 0').get()!.c;
-  const scored_entries = db.query<{ c: number }, []>('SELECT COUNT(*) as c FROM entry_scores').get()!.c;
+  const tagged_entries = db.query<{ c: number }, []>('SELECT COUNT(*) as c FROM entries WHERE tagged_at IS NOT NULL').get()!.c;
   const pending_jobs = db.query<{ c: number }, []>("SELECT COUNT(*) as c FROM jobs WHERE status = 'pending'").get()!.c;
-  return { total_feeds, total_entries, unread_entries, scored_entries, pending_jobs };
+  return { total_feeds, total_entries, unread_entries, tagged_entries, pending_jobs };
 };
 
 // --- Feeds with stats (for /api/feeds) ---
 
-export const getFeedsWithStats = (db: Database): FeedWithStats[] => {
-  const feeds = db.query<Feed & { entry_count: number; unread_count: number }, []>(
+export const getFeedsWithStats = (db: Database): FeedWithStats[] =>
+  db.query<FeedWithStats, []>(
     `SELECT f.*,
        (SELECT COUNT(*) FROM entries e WHERE e.feed_id = f.id) as entry_count,
        (SELECT COUNT(*) FROM entries e WHERE e.feed_id = f.id AND e.is_read = 0) as unread_count
      FROM feeds f ORDER BY f.title ASC`
   ).all();
 
-  // Attach categories per feed
-  const fcRows = db.query<{ feed_id: FeedId; category_id: CategoryId }, []>(
-    'SELECT feed_id, category_id FROM feed_categories'
-  ).all();
+// --- Built-in Tag Seeding ---
 
-  const cats = getAllCategories(db);
-  const catMap = new Map(cats.map(c => [c.id, c]));
-  const feedCats = new Map<FeedId, Category[]>();
-  for (const fc of fcRows) {
-    const cat = catMap.get(fc.category_id);
-    if (cat) {
-      const arr = feedCats.get(fc.feed_id) ?? [];
-      arr.push(cat);
-      feedCats.set(fc.feed_id, arr);
+const BUILTIN_TAGS: ReadonlyArray<{ slug: string; label: string; tag_group: string; sort_order: number }> = [
+  { slug: 'politics', label: 'Politics', tag_group: 'news', sort_order: 1 },
+  { slug: 'geopolitics', label: 'Geopolitics', tag_group: 'news', sort_order: 2 },
+  { slug: 'war-conflict', label: 'War & Conflict', tag_group: 'news', sort_order: 3 },
+  { slug: 'economics', label: 'Economics', tag_group: 'news', sort_order: 4 },
+  { slug: 'environment', label: 'Environment & Climate', tag_group: 'news', sort_order: 5 },
+  { slug: 'health', label: 'Health & Medicine', tag_group: 'news', sort_order: 6 },
+  { slug: 'programming', label: 'Programming', tag_group: 'tech', sort_order: 7 },
+  { slug: 'technology', label: 'Technology', tag_group: 'tech', sort_order: 8 },
+  { slug: 'gadgets', label: 'Gadgets & Hardware', tag_group: 'tech', sort_order: 9 },
+  { slug: 'ai-ml', label: 'AI & Machine Learning', tag_group: 'tech', sort_order: 10 },
+  { slug: 'cybersecurity', label: 'Cybersecurity', tag_group: 'tech', sort_order: 11 },
+  { slug: 'open-source', label: 'Open Source', tag_group: 'tech', sort_order: 12 },
+  { slug: 'apple', label: 'Apple / iOS', tag_group: 'tech', sort_order: 13 },
+  { slug: 'android', label: 'Android / Mobile', tag_group: 'tech', sort_order: 14 },
+  { slug: 'startups', label: 'Startups & VC', tag_group: 'tech', sort_order: 15 },
+  { slug: 'crypto', label: 'Crypto & Web3', tag_group: 'tech', sort_order: 16 },
+  { slug: 'science', label: 'Science', tag_group: 'science', sort_order: 17 },
+  { slug: 'space', label: 'Space & Astronomy', tag_group: 'science', sort_order: 18 },
+  { slug: 'sports', label: 'Sports', tag_group: 'sports', sort_order: 19 },
+  { slug: 'gaming', label: 'Gaming', tag_group: 'culture', sort_order: 20 },
+  { slug: 'movies-tv', label: 'Movies & TV', tag_group: 'culture', sort_order: 21 },
+  { slug: 'music', label: 'Music', tag_group: 'culture', sort_order: 22 },
+  { slug: 'celebrity', label: 'Celebrity', tag_group: 'culture', sort_order: 23 },
+  { slug: 'fashion', label: 'Fashion & Style', tag_group: 'culture', sort_order: 24 },
+  { slug: 'food', label: 'Food & Drink', tag_group: 'culture', sort_order: 25 },
+  { slug: 'travel', label: 'Travel', tag_group: 'culture', sort_order: 26 },
+  { slug: 'opinion', label: 'Opinion & Editorial', tag_group: 'meta', sort_order: 27 },
+  { slug: 'tutorial', label: 'Tutorial & How-to', tag_group: 'meta', sort_order: 28 },
+  { slug: 'long-read', label: 'Long Read', tag_group: 'meta', sort_order: 29 },
+  { slug: 'humor', label: 'Humor', tag_group: 'meta', sort_order: 30 },
+  { slug: 'press-release', label: 'Press Release', tag_group: 'meta', sort_order: 31 },
+  { slug: 'deals', label: 'Deals & Sales', tag_group: 'meta', sort_order: 32 },
+];
+
+export const seedBuiltinTags = (db: Database): number => {
+  const count = db.query<{ c: number }, []>('SELECT COUNT(*) as c FROM tags').get()!.c;
+  if (count > 0) return 0;
+
+  const stmt = db.prepare(
+    'INSERT INTO tags (slug, label, tag_group, is_builtin, use_count, sort_order) VALUES (?, ?, ?, 1, 0, ?)',
+  );
+
+  const insertAll = db.transaction(() => {
+    for (const tag of BUILTIN_TAGS) {
+      stmt.run(tag.slug, tag.label, tag.tag_group, tag.sort_order);
     }
-  }
+    return BUILTIN_TAGS.length;
+  });
 
-  return feeds.map(f => ({
-    ...f,
-    categories: feedCats.get(f.id) ?? [],
-  }));
+  return insertAll();
+};
+
+// --- Starter Feed Seeding ---
+
+const STARTER_FEEDS: ReadonlyArray<{ url: string; title: string }> = [
+  // World News / Geopolitics
+  { url: 'https://feeds.bbci.co.uk/news/world/rss.xml', title: 'BBC World News' },
+  { url: 'https://www.aljazeera.com/xml/rss/all.xml', title: 'Al Jazeera' },
+  { url: 'https://www.theguardian.com/world/rss', title: 'The Guardian World' },
+  { url: 'https://feeds.npr.org/1001/rss.xml', title: 'NPR News' },
+  { url: 'https://www.reddit.com/r/worldnews/top/.rss?t=day', title: 'r/worldnews' },
+  // Markets / Finance
+  { url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114', title: 'CNBC Top News' },
+  { url: 'https://finance.yahoo.com/news/rssindex', title: 'Yahoo Finance' },
+  { url: 'https://feeds.bloomberg.com/markets/news.rss', title: 'Bloomberg Markets' },
+  { url: 'https://feeds.marketwatch.com/marketwatch/topstories/', title: 'MarketWatch' },
+  { url: 'https://www.ft.com/rss/home', title: 'Financial Times' },
+  // Engineering / Programming
+  { url: 'https://hnrss.org/best', title: 'Hacker News Best' },
+  { url: 'https://www.reddit.com/r/programming/top/.rss?t=day', title: 'r/programming' },
+  { url: 'https://dev.to/feed', title: 'DEV.to' },
+  { url: 'https://lobste.rs/rss', title: 'Lobsters' },
+  { url: 'https://blog.pragmaticengineer.com/rss/', title: 'Pragmatic Engineer' },
+  // Science
+  { url: 'https://www.nature.com/nature.rss', title: 'Nature' },
+  { url: 'https://www.reddit.com/r/science/.rss', title: 'r/science' },
+  // Technology / Gadgets
+  { url: 'https://feeds.arstechnica.com/arstechnica/index', title: 'Ars Technica' },
+  { url: 'https://www.theverge.com/rss/index.xml', title: 'The Verge' },
+  { url: 'https://techcrunch.com/feed/', title: 'TechCrunch' },
+  { url: 'https://www.wired.com/feed/rss', title: 'Wired' },
+  { url: 'https://www.tomshardware.com/feeds/all', title: "Tom's Hardware" },
+  { url: 'https://www.reddit.com/r/technology/.rss', title: 'r/technology' },
+  { url: 'https://feeds.feedburner.com/venturebeat/SZYF', title: 'VentureBeat' },
+  // Gaming
+  { url: 'https://www.rockpapershotgun.com/feed', title: 'Rock Paper Shotgun' },
+  { url: 'https://www.gamespot.com/feeds/mashup/', title: 'GameSpot' },
+  { url: 'https://feeds.feedburner.com/ign/all', title: 'IGN' },
+  { url: 'https://www.reddit.com/r/gamedeals/.rss', title: 'r/GameDeals' },
+  // Space / Astronomy
+  { url: 'https://www.nasa.gov/feed/', title: 'NASA' },
+  { url: 'https://spacenews.com/feed/', title: 'SpaceNews' },
+  { url: 'https://www.space.com/feeds/all', title: 'Space.com' },
+  // Culture / Arts
+  { url: 'https://hyperallergic.com/feed/', title: 'Hyperallergic' },
+  { url: 'https://www.designboom.com/feed/', title: 'Designboom' },
+  { url: 'https://www.dezeen.com/feed/', title: 'Dezeen' },
+  { url: 'https://www.archdaily.com/feed', title: 'ArchDaily' },
+  { url: 'https://www.creativebloq.com/feeds/all', title: 'Creative Bloq' },
+  { url: 'https://petapixel.com/feed/', title: 'PetaPixel' },
+  // Long Reads / Deep Dives
+  { url: 'https://longreads.com/feed/', title: 'Longreads' },
+  { url: 'https://www.theatlantic.com/feed/all/', title: 'The Atlantic' },
+  // Security / Privacy
+  { url: 'https://krebsonsecurity.com/feed/', title: 'Krebs on Security' },
+  { url: 'https://www.schneier.com/feed/', title: 'Schneier on Security' },
+  // AI / Machine Learning
+  { url: 'https://www.reddit.com/r/MachineLearning/.rss', title: 'r/MachineLearning' },
+  // Open Source
+  { url: 'https://github.blog/feed/', title: 'GitHub Blog' },
+  // Apple / iOS
+  { url: 'https://9to5mac.com/feed/', title: '9to5Mac' },
+  // Android / Mobile
+  { url: 'https://www.androidauthority.com/feed/', title: 'Android Authority' },
+  // Sports
+  { url: 'https://feeds.bbci.co.uk/sport/rss.xml', title: 'BBC Sport' },
+  { url: 'https://www.theguardian.com/uk/sport/rss', title: 'The Guardian Sport' },
+  { url: 'https://www.espn.com/espn/rss/news', title: 'ESPN' },
+  // Music
+  { url: 'https://pitchfork.com/feed/feed-news/rss', title: 'Pitchfork' },
+  { url: 'https://www.stereogum.com/feed/', title: 'Stereogum' },
+  { url: 'https://consequenceofsound.net/feed/', title: 'Consequence of Sound' },
+  { url: 'https://www.reddit.com/r/music/.rss', title: 'r/Music' },
+  // Movies / Entertainment
+  { url: 'https://www.hollywoodreporter.com/feed/', title: 'Hollywood Reporter' },
+  { url: 'https://variety.com/feed/', title: 'Variety' },
+  { url: 'https://www.indiewire.com/feed/', title: 'IndieWire' },
+  { url: 'https://www.slashfilm.com/feed/', title: 'SlashFilm' },
+  { url: 'https://collider.com/feed/', title: 'Collider' },
+  { url: 'https://www.reddit.com/r/movies/.rss', title: 'r/movies' },
+  // Fashion / Style
+  { url: 'https://www.vogue.com/feed/rss', title: 'Vogue' },
+  { url: 'https://fashionista.com/feed', title: 'Fashionista' },
+  { url: 'https://www.highsnobiety.com/feed/', title: 'Highsnobiety' },
+  // Environment / Climate
+  { url: 'https://grist.org/feed/', title: 'Grist' },
+  { url: 'https://insideclimatenews.org/feed/', title: 'Inside Climate News' },
+  // Health / Medicine
+  { url: 'https://www.statnews.com/feed/', title: 'STAT News' },
+];
+
+export const STARTER_FEED_COUNT = STARTER_FEEDS.length;
+
+export const seedStarterFeeds = (db: Database): number => {
+  const count = db.query<{ c: number }, []>('SELECT COUNT(*) as c FROM feeds').get()!.c;
+  if (count > 0) return 0;
+
+  const stmt = db.prepare(
+    'INSERT OR IGNORE INTO feeds (url, title) VALUES (?, ?)',
+  );
+
+  const insertAll = db.transaction(() => {
+    for (const feed of STARTER_FEEDS) {
+      stmt.run(feed.url, feed.title);
+    }
+    return STARTER_FEEDS.length;
+  });
+
+  return insertAll();
 };
