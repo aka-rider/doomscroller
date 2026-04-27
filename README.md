@@ -1,34 +1,35 @@
 # Doomscroller
 
-Doomscroller (sarcastic) is a self-hosted reader that cuts through the noise.
+Doomscroller (sarcastic) self-hosted RSS reader that helps you cut through the noise.
 
-* You pick your interests:
+* You pick your specific interests:
 
-  * `baseball` and `volleyball` not `sports`
-  * `rust`, and `malware research` not `programming`
-  * also, create your own
+  * `baseball` and `volleyball` instead of `sports`
+  * `rust` and `malware research` instead of `programming`
+  * You can also create your own custom tags
 
-* You mute tags you don't like
-* Articles are automatically scored for **content depth** (noise → shallow → standard → substantive → dense) — press releases, hiring ads, and marketing copy are filtered out by default
-* You also may gradually create a "user preference" by voting 👍 or 👎 on individual articles
+* You mute tags you don't care about
+* Articles are automatically scored for **content depth** (noise → shallow → standard → substantive → dense). Press releases, hiring ads, and marketing copy are filtered out by default.
+* You naturally build a "user preference" profile by voting 👍 or 👎 on individual articles.
 
-## Every architectural decision
+## Architectural Decisions
 
 * Local-first, single-user, no telemetry, no data leaves your machine
-* RSS as the main content stream, everyone supports it, if not — there is an X to RSS converter
+* RSS as the main content stream. Everyone supports it — and if they don't, there is an X to RSS converter
 * Web UI or bring-your-own RSS client
-* No complex stochastic models, few "moving parts"
+* No complex stochastic models, simple filtering (you see the outliers and can adjust your filters)
+* SQLite for the maximum performance
 * Docker-first
 
 ## How the algorithm works
 
-Doomscroller relies on a two-axis tagging and scoring system entirely driven by local vector embeddings:
+Doomscroller relies on a tagging and scoring system driven by local vector embeddings:
 
-1. **Tag Filtering:** Each incoming article is batched and embedded via `nomic-embed-text-v1.5`. The article's embedding vector is compared against ~300 topic tags using cosine similarity. Strong matches are assigned to the article, automatically categorizing your feeds.
+1. **Tag Filtering:** Each incoming article is batched and embedded via `nomic-embed-text-v1.5`. The article's embedding vector is compared against a hierarchical taxonomy — 22 categories and ~750 topic tags — using a two-pass cosine similarity approach. This categorizes the feed without manual rules and disambiguates overlapping terms (like Apple the fruit versus Apple the company).
 
-2. **Depth Scoring:** Each article is also scored against five content-depth anchor descriptions (noise, shallow, standard, substantive, dense) via softmax-weighted cosine similarity, producing a continuous `depth_score` (0.0–1.0). Low-scoring articles (press releases, hiring ads, marketing copy) are automatically hidden from Your Feed. A dedicated Noise view lets you review them.
+2. **Depth Scoring:** Every article is scored against five content-depth anchors (noise, shallow, standard, substantive, dense) via softmax-weighted cosine similarity. This outputs a continuous `depth_score` (0.0–1.0). Low-scoring items like press releases, hiring ads, and marketing copy skip your main feed entirely and go straight to the Noise view.
 
-3. **Preference Scoring (Thumbs Up / Thumbs Down):** As you read, your interactions (starring or hiding) contribute to a persistent "user preference vector". New articles are scored against this vector, allowing the system to learn what you enjoy and what you typically ignore.
+3. **Preference Scoring (Thumbs Up / Thumbs Down):** Your reading habits build a persistent "user preference vector." When you star or hide articles, the system shifts your baseline vector.
 
 ## How to run
 
@@ -75,5 +76,5 @@ bun run check
 ```
 
 * **SQLite Database:** The database (with WAL mode enabled) lives at `data/doomscroller.sqlite`. You can run queries directly for metrics or debugging.
-* **Tags:** Adjust the base tags by modifying the initial embedding tags setup in `server/src/tagger/batch.ts` or related files.
+* **Tags:** Adjust the base taxonomy by modifying `server/src/taxonomy.ts`.
 * **Jobs:** The application relies on an internal SQLite-backed job queue for everything from fetching feeds to generating tags. Check out `server/src/jobs/`.

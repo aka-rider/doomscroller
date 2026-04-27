@@ -1,4 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
+import { htmlToText } from 'html-to-text';
 import type { FeedId, Result } from '../types';
 import { Ok, Err } from '../types';
 
@@ -62,9 +63,9 @@ const parseRSS2 = (channel: Record<string, unknown>): ParsedFeed => {
   const items = (channel.item as Record<string, unknown>[] | undefined) ?? [];
 
   return {
-    title: str(channel.title),
+    title: cleanText(str(channel.title)),
     siteUrl: str(channel.link),
-    description: str(channel.description),
+    description: cleanText(str(channel.description)),
     entries: items.map(parseRSS2Item),
   };
 };
@@ -77,8 +78,8 @@ const parseRSS2Item = (item: Record<string, unknown>): ParsedEntry => {
   return {
     guid: str(item.guid?.toString?.() ?? item.link),
     url: str(item.link),
-    title: str(item.title),
-    author: str(item['dc:creator'] ?? item.author),
+    title: cleanText(str(item.title)),
+    author: cleanText(str(item['dc:creator'] ?? item.author)),
     contentHtml,
     summary: stripHtml(contentHtml).slice(0, 1000),
     imageUrl: extractImageUrl(item, contentHtml),
@@ -93,9 +94,9 @@ const parseAtom = (feed: Record<string, unknown>): ParsedFeed => {
   const link = findLink(feed.link, 'alternate') ?? findLink(feed.link);
 
   return {
-    title: str(feed.title),
+    title: cleanText(str(feed.title)),
     siteUrl: link,
-    description: str(feed.subtitle),
+    description: cleanText(str(feed.subtitle)),
     entries: entries.map(parseAtomEntry),
   };
 };
@@ -118,10 +119,10 @@ const parseAtomEntry = (entry: Record<string, unknown>): ParsedEntry => {
   return {
     guid: str(entry.id ?? link),
     url: link,
-    title: str(typeof entry.title === 'object' && entry.title !== null
+    title: cleanText(str(typeof entry.title === 'object' && entry.title !== null
       ? (entry.title as Record<string, unknown>)['#text']
-      : entry.title),
-    author: extractAtomAuthor(entry),
+      : entry.title)),
+    author: cleanText(extractAtomAuthor(entry)),
     contentHtml: html,
     summary: stripHtml(html).slice(0, 1000),
     imageUrl: extractImageUrl(entry, html),
@@ -136,9 +137,9 @@ const parseRDF = (rdf: Record<string, unknown>): ParsedFeed => {
   const items = (rdf.item as Record<string, unknown>[] | undefined) ?? [];
 
   return {
-    title: str(channel.title),
+    title: cleanText(str(channel.title)),
     siteUrl: str(channel.link),
-    description: str(channel.description),
+    description: cleanText(str(channel.description)),
     entries: items.map(parseRSS2Item), // RDF items have the same shape as RSS 2.0
   };
 };
@@ -189,18 +190,16 @@ const parseDate = (dateStr: string): number | null => {
 // Simple HTML stripping for summary generation.
 // Not security-critical — we're just extracting text for embedding.
 const stripHtml = (html: string): string =>
-  html
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#039;/g, "'")
-    .replace(/\s+/g, ' ')
-    .trim();
+  htmlToText(html, {
+    wordwrap: false,
+    selectors: [
+      { selector: 'img', format: 'skip' },
+      { selector: 'a', options: { ignoreHref: true } }
+    ]
+  }).trim();
+
+const cleanText = (text: string): string =>
+  htmlToText(text, { wordwrap: false }).trim();
 
 // Extract hero image from various RSS conventions
 const extractImageUrl = (item: Record<string, unknown>, html: string): string | null => {
