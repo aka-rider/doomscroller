@@ -1066,7 +1066,6 @@ button:hover {
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
     padding: var(--space-8);
     overflow-y: auto;
 }
@@ -1075,6 +1074,7 @@ button:hover {
     width: 100%;
     max-width: 32rem;
     text-align: center;
+    margin: auto;
 }
 
 .onboarding-step-dots {

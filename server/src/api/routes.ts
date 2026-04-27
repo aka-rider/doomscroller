@@ -118,6 +118,7 @@ export const createApiRoutes = (db: Database, config: AppConfig): Hono => {
         offset,
         unreadOnly: params.data.unread === 'true',
         showNoise: showNoiseVal === '1',
+        ...(tagSlugs != null ? { tagSlugs } : {}),
       });
     }
 

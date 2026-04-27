@@ -325,7 +325,7 @@ export const getThumbedEntryEmbeddings = (
 
 export const getVisibleEntries = (
   db: Database,
-  opts: { limit: number; offset: number; unreadOnly?: boolean; showNoise?: boolean },
+  opts: { limit: number; offset: number; unreadOnly?: boolean; showNoise?: boolean; tagSlugs?: string[] },
 ): Array<Entry & { feed_title: string; feed_site_url: string }> => {
   const NOISE_THRESHOLD = 0.15;
 
@@ -351,6 +351,12 @@ export const getVisibleEntries = (
 
   if (opts.unreadOnly) {
     conditions.push('e.is_read = 0');
+  }
+
+  if (opts.tagSlugs && opts.tagSlugs.length > 0) {
+    const placeholders = opts.tagSlugs.map(() => '?').join(', ');
+    conditions.push(`EXISTS (SELECT 1 FROM entry_tags et JOIN tags t ON et.tag_id = t.id WHERE et.entry_id = e.id AND t.slug IN (${placeholders}))`);
+    params.push(...opts.tagSlugs);
   }
 
   // Hide noise entries unless explicitly requested
