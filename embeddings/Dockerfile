@@ -8,4 +8,4 @@ COPY --from=downloader /model/nomic.gguf /model/nomic.gguf
 
 EXPOSE 8081
 
-CMD ["-m", "/model/nomic.gguf", "--embedding", "--pooling", "mean", "--ctx-size", "32768", "--batch-size", "8192", "--parallel", "8", "--port", "8081", "--host", "0.0.0.0"]
+CMD ["-m", "/model/nomic.gguf", "--embedding", "--pooling", "mean", "--ctx-size", "32768", "--batch-size", "8192", "--ubatch-size", "8192", "--parallel", "8", "--port", "8081", "--host", "0.0.0.0"]
