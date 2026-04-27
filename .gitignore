@@ -6,3 +6,9 @@ web/public/fonts/
 *.db-wal
 *.db-shm
 .DS_Store
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+.beads-credential-key
+.beads/
+claude-local

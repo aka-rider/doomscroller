@@ -635,6 +635,47 @@ export const rebuildTagUseCounts = (db: Database): void => {
   )`);
 };
 
+// --- Reader View: Extractive Summarization + Content Extraction ---
+
+export const updateEntrySummary = (
+  db: Database,
+  id: EntryId,
+  extractiveSummary: string,
+  wc: number,
+): void => {
+  db.run(
+    'UPDATE entries SET extractive_summary = ?, word_count = ? WHERE id = ?',
+    [extractiveSummary, wc, id],
+  );
+};
+
+export const getEntryContent = (
+  db: Database,
+  id: EntryId,
+): { url: string; content_full: string | null; content_html: string; extracted_at: number | null } | null =>
+  db.query<{ url: string; content_full: string | null; content_html: string; extracted_at: number | null }, [EntryId]>(
+    'SELECT url, content_full, content_html, extracted_at FROM entries WHERE id = ?',
+  ).get(id);
+
+export const updateEntryContent = (
+  db: Database,
+  id: EntryId,
+  contentFull: string,
+): void => {
+  db.run(
+    'UPDATE entries SET content_full = ?, extracted_at = unixepoch() WHERE id = ?',
+    [contentFull, id],
+  );
+};
+
+export const clearExpiredContent = (db: Database, days: number): number => {
+  const result = db.run(
+    'UPDATE entries SET content_full = NULL, extracted_at = NULL WHERE extracted_at IS NOT NULL AND extracted_at < unixepoch() - (? * 86400)',
+    [days],
+  );
+  return result.changes;
+};
+
 // --- Starter Feed Seeding ---
 
 const STARTER_FEEDS: ReadonlyArray<{ url: string; title: string }> = [

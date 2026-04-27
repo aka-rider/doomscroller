@@ -54,6 +54,12 @@ if (seededFeeds > 0) {
   console.log(`[init] Seeded ${seededFeeds} starter feeds`);
 }
 
+// --- Seed default config values ---
+
+if (!queries.getConfig(db, 'reader_cache_days')) {
+  queries.setConfig(db, 'reader_cache_days', '7');
+}
+
 // --- Embed tag descriptions, category descriptions, and depth anchors on startup ---
 
 const initTagEmbeddings = async (retries = 5, delaySec = 5): Promise<void> => {
@@ -172,6 +178,11 @@ const handleCleanup: JobHandler = async () => {
     [cutoff]
   );
   if (result.changes > 0) console.log(`[cleanup] Removed ${result.changes} old read entries`);
+
+  // Clean expired reader cache
+  const cacheDays = Number(queries.getConfig(db, 'reader_cache_days') ?? '7');
+  const expired = queries.clearExpiredContent(db, cacheDays);
+  if (expired > 0) console.log(`[cleanup] Cleared reader cache for ${expired} entries`);
 };
 
 const handleTagBatch: JobHandler = async () => {

@@ -13,7 +13,7 @@ Think Apple for RSS. Ship amazing defaults that work for everyone out of the box
 
 - **Defaults over settings.** Every behavior should have one correct default. If you're tempted to add a toggle, pick the better option and hardcode it. A setting is an admission that you didn't finish designing.
 - **Simplicity = longevity.** Every config option is a maintenance burden forever. Every preference pane is UI that can break, state that can corrupt, and docs that need writing. Less surface area means fewer bugs and easier upgrades.
-- **Zero configuration on first run.** `make up` and it works. No setup wizard, no onboarding flow, no "please configure your preferences." Feeds fetch, tagging runs, the UI loads. Done.
+- **Zero configuration on first run.** `make up` and it works. Feeds fetch, tagging runs, the UI loads. An onboarding flow guides first-time setup, and a settings panel lets you tweak behavior. But the defaults are opinionated and work out of the box.
 - **Convention over configuration.** 30-minute fetch interval. If power users want knobs, they can fork — but the product serves the person who just wants to read.
 - **Opinionated is a feature.** Don't build infrastructure for hypothetical needs. Don't add plugin systems, theming engines, or extension points. Build one thing, make it feel inevitable.
 - **When in doubt, remove.** The best feature is the one you didn't build. If it doesn't clearly serve the core experience — reading feeds, categorized by AI — it doesn't ship.
@@ -53,26 +53,31 @@ Two containers. One SQLite file. No Postgres, no Redis, no message queues.
 ```text
 server/src/
   index.ts          — entry point, wires everything together
+  categories.ts     — feed-to-category mapping
+  taxonomy.ts       — depth anchors for quality scoring
+  types.ts          — branded types, Result<T,E>, shared interfaces
   db/
     schema.sql      — source of truth for database schema
     index.ts        — init, migrations, pragma setup
     queries.ts      — prepared statements, typed wrappers
-  jobs/
-    queue.ts        — SQLite-backed job queue (poll, claim, complete, fail)
   feeds/
     fetcher.ts      — HTTP fetch with ETag/If-Modified-Since
     parser.ts       — feedparser wrapper, normalize to Entry shape
+    extractor.ts    — readability/HTML extraction for articles
+    summarizer.ts   — TextRank extractive summarization
+  jobs/
+    queue.ts        — SQLite-backed job queue (poll, claim, complete, fail)
   tagger/
     embeddings.ts   — embedding sidecar HTTP client + input builder
     batch.ts        — batch embedding + cosine similarity tag assignment
   scorer/
-    preference.ts   — user preference vector from starred articles
+    preference.ts   — user preference vector from thumbed articles
   api/
     routes.ts       — Hono routes: /api/feeds, /api/entries, /api/tags, etc.
     fever.ts        — Fever API for native mobile RSS clients
 web/src/
   index.tsx         — SolidJS mount
-  App.tsx           — router + layout
+  App.tsx           — state-based view switching (feed/favorites/trash/noise/everything) + layout
   components/       — UI components
   lib/api.ts        — typed fetch wrapper
 ```
@@ -95,7 +100,7 @@ web/src/
 - **All writes go through one connection.** Bun's SQLite is synchronous — this is natural.
 - **Reads can use separate connections** if needed, but for a single-user app one connection is fine.
 - **Prepared statements** for everything. Never concatenate SQL strings.
-- **Migrations** are numbered SQL files. Applied in order. Tracked in a `_migrations` table.
+- **Migrations** are inline `ALTER TABLE` statements in `db/index.ts`, guarded by `pragma_table_info` checks for idempotency. No `_migrations` table.
 - `unixepoch()` for all timestamps. No ISO strings in the database.
 - IDs are `INTEGER PRIMARY KEY` (SQLite rowid alias). No UUIDs.
 
@@ -104,7 +109,7 @@ web/src/
 SQLite-based. No external dependencies.
 
 ```sql
-jobs table: id, type, payload (JSON), status, run_after, attempts, max_attempts
+jobs table: id, type, payload (JSON), status, priority, run_after, started_at, completed_at, attempts, max_attempts, error, created_at
 ```
 
 - Workers poll with `UPDATE ... SET status='running' WHERE status='pending' AND run_after <= now LIMIT 1 RETURNING *`
@@ -119,9 +124,10 @@ jobs table: id, type, payload (JSON), status, run_after, attempts, max_attempts
 - 768-dimensional embeddings, 8192 token context, handles full articles without chunking
 - **All embedding calls are async jobs.** Batch up to 64 articles per call (~1-3 seconds)
 - Embedding responses validated with Zod before writing to DB
-- Two-axis tagging: ~120 topic tags + ~14 signal tags, assigned via cosine similarity
+- Topic tags (~120) assigned via cosine similarity against tag embeddings
+- `depth_score` (0–1) replaces signal tags — continuous quality signal computed from content signals
 - Tag descriptions embedded on startup; article embeddings compared against tag embeddings
-- User preference vector computed from starred articles (Phase 2) for personalized ranking
+- User preference vector computed from thumbed articles (thumb up/down) — activates after 5+ thumbed entries
 
 ## Feed Fetching
 
@@ -131,7 +137,7 @@ jobs table: id, type, payload (JSON), status, run_after, attempts, max_attempts
 - Dedup by `(feed_id, guid)`. If no guid, hash `(url + title + published_date)`
 - Parse with a robust RSS/Atom parser. Normalize to a common `Entry` shape.
 - Strip HTML for the `summary` field (plain text for embedding). Keep original `content` for display.
-- Fetch interval: default 30 min, configurable per feed, respect feed-specified TTL
+- Fetch interval: global default 30 min (configurable via DEFAULT_CONFIG). Per-feed `fetch_interval_min` column exists but is not yet used by the scheduler.
 
 ## API Design
 
@@ -179,6 +185,8 @@ return <span>{store.user.name}</span>;
 ```
 
 Same reason as props. Stores are proxies. Destructuring kills tracking.
+
+**Note:** This project does not use `createStore` — all state is managed via `createSignal` and `createResource`. The SolidJS store destructuring pitfall is documented for reference but is not exercised in this codebase.
 
 ## 3. Signal Getters Are Function Calls
 
@@ -321,7 +329,7 @@ if the computation is expensive and you need to cache the result.
 - Imports: no barrel files (`index.ts` re-exports). Import directly from the source file.
 - No default exports. Named exports only. `export const Card = ...`
 - Tests: colocated as `*.test.ts` next to the source file
-- No `console.log` in committed code. Use a structured logger.
+- No `console.log` in committed code. Use `console.debug` for dev logging; use Bun's built-in `console` for production.
 
 # Performance Targets
 
@@ -333,7 +341,7 @@ if the computation is expensive and you need to cache the result.
 
 # Security
 
-- All Docker ports bound to `127.0.0.1`
+- Server binds to `0.0.0.0` (Docker compose maps to localhost)
 - No `curl | sh`, no `wget | bash`
 - Dependencies pinned with lockfile hashes
 - Docker images pinned to digest
@@ -342,3 +350,51 @@ if the computation is expensive and you need to cache the result.
 - No secrets in environment variables (there are none — it's fully local)
 - CSP headers on the web UI
 - Fever API uses API key auth (generated on first boot, stored in SQLite)
+
+
+<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
+## Beads Issue Tracker
+
+This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
+
+### Quick Reference
+
+```bash
+bd ready              # Find available work
+bd show <id>          # View issue details
+bd update <id> --claim  # Claim work
+bd close <id>         # Complete work
+```
+
+### Rules
+
+- Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or markdown TODO lists
+- Run `bd prime` for detailed command reference and session close protocol
+- Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
+
+## Session Completion
+
+**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
+
+**MANDATORY WORKFLOW:**
+
+1. **File issues for remaining work** - Create issues for anything that needs follow-up
+2. **Run quality gates** (if code changed) - Tests, linters, builds
+3. **Update issue status** - Close finished work, update in-progress items
+4. **PUSH TO REMOTE** - This is MANDATORY:
+   ```bash
+   git pull --rebase
+   bd dolt push
+   git push
+   git status  # MUST show "up to date with origin"
+   ```
+5. **Clean up** - Clear stashes, prune remote branches
+6. **Verify** - All changes committed AND pushed
+7. **Hand off** - Provide context for next session
+
+**CRITICAL RULES:**
+- Work is NOT complete until `git push` succeeds
+- NEVER stop before pushing - that leaves work stranded locally
+- NEVER say "ready to push when you are" - YOU must push
+- If push fails, resolve and retry until it succeeds
+<!-- END BEADS INTEGRATION -->

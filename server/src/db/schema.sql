@@ -1,4 +1,4 @@
--- Doomscroller schema v006
+-- Doomscroller schema v007
 -- SQLite with WAL mode. All timestamps are unixepoch integers.
 -- Embeddings stored as raw Little-Endian Float32Array BLOBs (768 × 4 = 3072 bytes).
 
@@ -55,6 +55,10 @@ CREATE TABLE IF NOT EXISTS entries (
     relevance_score REAL,              -- cosine sim to user preference vector (-1.0 to 1.0)
     depth_score     REAL,              -- content depth (0.0=noise, 1.0=dense academic)
     thumb           INTEGER,           -- 1=up, -1=down, NULL=none
+    extractive_summary TEXT,            -- TextRank: 2-4 key sentences from article
+    word_count      INTEGER,            -- article word count for "N min read"
+    content_full    TEXT,               -- Readability-extracted clean HTML (cached)
+    extracted_at    INTEGER,            -- when full content was extracted (for cache expiry)
     UNIQUE(feed_id, guid)
 );
 

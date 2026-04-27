@@ -1,6 +1,6 @@
 import { createSignal, createResource, For, Show, Suspense } from 'solid-js';
 import { api } from '../lib/api';
-import type { Tag } from '../lib/api';
+import type { Tag, Settings } from '../lib/api';
 import { timeAgo } from '../lib/api';
 import { TagPreferenceGrid } from './TagPreferenceGrid';
 
@@ -614,8 +614,71 @@ const StatusTab = () => {
               </table>
             </div>
           </div>
+
+          {/* Reader Cache Settings */}
+          <ReaderCacheSettings />
         </Show>
       </Suspense>
+    </div>
+  );
+};
+
+// --- Reader Cache Settings ---
+
+const CACHE_OPTIONS = [1, 3, 7, 14, 30] as const;
+
+const ReaderCacheSettings = () => {
+  const [settings] = createResource(() => api.config.getSettings());
+  const [saving, setSaving] = createSignal(false);
+
+  const handleChange = async (days: number) => {
+    setSaving(true);
+    try {
+      await api.config.updateSettings({ reader_cache_days: days });
+    } catch {
+      // best-effort
+    }
+    setSaving(false);
+  };
+
+  return (
+    <div style={{
+      "margin-top": "var(--space-5)",
+      "padding": "var(--space-4)",
+      "background": "var(--bg-tertiary)",
+      "border-radius": "var(--radius-md)",
+      "border": "1px solid var(--border)",
+    }}>
+      <h4 style={{
+        "font-family": "var(--font-serif)",
+        "font-size": "var(--text-base)",
+        "margin-bottom": "var(--space-3)",
+      }}>
+        Storage
+      </h4>
+      <div style={{ display: "flex", "align-items": "center", gap: "var(--space-3)" }}>
+        <span class="meta">Reader cache</span>
+        <Suspense fallback={<span class="meta">...</span>}>
+          <Show when={settings()}>
+            <select
+              class="settings-input"
+              value={settings()!.reader_cache_days}
+              onChange={(e) => handleChange(Number(e.currentTarget.value))}
+              disabled={saving()}
+              style={{ padding: "var(--space-1) var(--space-2)", "min-width": "5rem" }}
+            >
+              <For each={[...CACHE_OPTIONS]}>
+                {(days) => (
+                  <option value={days}>{days} {days === 1 ? 'day' : 'days'}</option>
+                )}
+              </For>
+            </select>
+          </Show>
+        </Suspense>
+      </div>
+      <p class="meta" style={{ "margin-top": "var(--space-2)" }}>
+        Full articles are cached locally for this many days after you read them.
+      </p>
     </div>
   );
 };

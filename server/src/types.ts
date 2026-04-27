@@ -61,6 +61,10 @@ export interface Entry {
   readonly relevance_score: number | null;
   readonly depth_score: number | null;  // 0.0=noise, 1.0=dense academic
   readonly thumb: number | null;  // 1=up, -1=down, null=none
+  readonly extractive_summary: string | null;  // TextRank: 2-4 key sentences
+  readonly word_count: number | null;          // article word count
+  readonly content_full: string | null;        // Readability-extracted clean HTML
+  readonly extracted_at: number | null;        // when content was extracted
 }
 
 export interface Tag {

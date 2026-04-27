@@ -7,6 +7,7 @@ import {
 } from './embeddings';
 import { DEPTH_ANCHORS } from '../taxonomy';
 import type { DepthAnchorDef } from '../taxonomy';
+import { extractiveSummarize, wordCount } from '../feeds/summarizer';
 
 // --- Cosine Similarity ---
 
@@ -330,6 +331,16 @@ export const tagBatch = async (db: Database, config: AppConfig): Promise<number>
     if (prefVec) {
       const score = cosineSimilarity(embedding, prefVec);
       queries.setEntryRelevanceScore(db, entry.id, score);
+    }
+
+    // Extractive summarization — TextRank on RSS content (no HTTP fetch)
+    if (!entry.extractive_summary && entry.content_html) {
+      const plainText = entry.summary || entry.content_html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      if (plainText.length > 50) {
+        const summary = extractiveSummarize(plainText);
+        const wc = wordCount(plainText);
+        queries.updateEntrySummary(db, entry.id, summary, wc);
+      }
     }
 
     queries.markEntryTagged(db, entry.id);

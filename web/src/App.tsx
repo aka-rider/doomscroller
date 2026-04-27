@@ -45,6 +45,11 @@ export const App = () => {
   const [activeCategory, setActiveCategory] = createSignal<string | null>(null);
   const [activeView, setActiveView] = createSignal<ViewMode>('feed');
   const [sidebarOpen, setSidebarOpen] = createSignal(false);
+  const [expandedEntryId, setExpandedEntryId] = createSignal<number | null>(null);
+
+  const toggleExpand = (id: number) => {
+    setExpandedEntryId(prev => prev === id ? null : id);
+  };
 
   // Resource fetcher adapts based on active view
   const [entries, { mutate: mutateEntries }] = createResource(
@@ -188,13 +193,21 @@ export const App = () => {
         scrollToFocused(prev);
         break;
       }
-      case 'o':
-      case 'Enter': {
+      case 'o': {
         if (idx >= 0 && idx < list.length) {
           e.preventDefault();
           const entry = list[idx]!;
           if (!entry.is_read) handleMarkRead(entry.id);
           window.open(entry.url, '_blank', 'noopener,noreferrer');
+        }
+        break;
+      }
+      case 'Enter':
+      case 'e': {
+        if (idx >= 0 && idx < list.length) {
+          e.preventDefault();
+          const entry = list[idx]!;
+          toggleExpand(entry.id);
         }
         break;
       }
@@ -228,7 +241,9 @@ export const App = () => {
         break;
       }
       case 'Escape': {
-        if (sidebarOpen()) {
+        if (expandedEntryId() !== null) {
+          setExpandedEntryId(null);
+        } else if (sidebarOpen()) {
           setSidebarOpen(false);
         } else {
           setFocusIndex(-1);
@@ -303,6 +318,8 @@ export const App = () => {
                   {(entry) => (
                     <EntryCard
                       entry={entry}
+                      expanded={expandedEntryId() === entry.id}
+                      onToggleExpand={toggleExpand}
                       onMarkRead={handleMarkRead}
                       onStar={handleStar}
                       onTagClick={handleTagClick}

@@ -8,6 +8,7 @@ import { healthCheck } from '../tagger/embeddings';
 import type { EmbeddingConfig } from '../tagger/embeddings';
 import { updatePreferenceVector, rescoreAllEntries } from '../scorer/preference';
 import { retagAllEntries } from '../tagger/batch';
+import { extractArticle } from '../feeds/extractor';
 
 import { CATEGORIES, CATEGORY_MAP } from '../categories';
 import type { CategoryView } from '../categories';
@@ -390,6 +391,60 @@ ${outlines}
   api.post('/retag', (c) => {
     const count = retagAllEntries(db);
     return c.json({ ok: true, retagged: count });
+  });
+
+  // --- Entry Content (On-demand Readability extraction) ---
+
+  api.get('/entries/:id/content', async (c) => {
+    const id = Number(c.req.param('id')) as EntryId;
+    const row = queries.getEntryContent(db, id);
+    if (!row) return c.json({ error: 'Not found' }, 404);
+
+    // Check cache: if content_full exists and within retention window, return cached
+    const cacheDays = Number(queries.getConfig(db, 'reader_cache_days') ?? '7');
+    const cacheExpiry = Math.floor(Date.now() / 1000) - cacheDays * 86400;
+
+    if (row.content_full && row.extracted_at && row.extracted_at > cacheExpiry) {
+      return c.json({ content_full: row.content_full, cached: true });
+    }
+
+    // Fetch and extract on demand
+    if (!row.url) {
+      return c.json({ content_full: row.content_html || null, cached: false });
+    }
+
+    const result = await extractArticle(row.url);
+    if (!result.ok) {
+      // Fallback to RSS content
+      return c.json({ content_full: row.content_html || null, cached: false, error: result.error });
+    }
+
+    // Cache the extracted content
+    queries.updateEntryContent(db, id, result.value.contentHtml);
+
+    return c.json({ content_full: result.value.contentHtml, cached: false });
+  });
+
+  // --- Settings ---
+
+  api.get('/config/settings', (c) => {
+    const cacheDays = Number(queries.getConfig(db, 'reader_cache_days') ?? '7');
+    return c.json({ reader_cache_days: cacheDays });
+  });
+
+  const settingsSchema = z.object({
+    reader_cache_days: z.number().int().min(1).max(90).optional(),
+  });
+
+  api.put('/config/settings', async (c) => {
+    const body = settingsSchema.safeParse(await c.req.json());
+    if (!body.success) return c.json({ error: body.error.message }, 400);
+
+    if (body.data.reader_cache_days !== undefined) {
+      queries.setConfig(db, 'reader_cache_days', String(body.data.reader_cache_days));
+    }
+
+    return c.json({ ok: true });
   });
 
   return api;

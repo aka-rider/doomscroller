@@ -27,6 +27,8 @@ interface EntryWithMeta {
   tagged_at: number | null;
   thumb: number | null;  // 1=up, -1=down, null=none
   depth_score: number | null;  // 0.0=noise → 1.0=dense academic
+  extractive_summary: string | null;  // TextRank: key sentences
+  word_count: number | null;          // article word count
   feed_title: string;
   feed_site_url: string;
   tags: EntryTag[];
@@ -95,6 +97,16 @@ interface OnboardingStatus {
   show_noise: boolean;
 }
 
+interface EntryContent {
+  content_full: string | null;
+  cached: boolean;
+  error?: string;
+}
+
+interface Settings {
+  reader_cache_days: number;
+}
+
 // --- Fetcher ---
 
 const get = async <T>(path: string): Promise<T> => {
@@ -120,6 +132,17 @@ const del = async <T>(path: string): Promise<T> => {
   return res.json() as Promise<T>;
 };
 
+const put = async <T>(path: string, body?: unknown): Promise<T> => {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'PUT',
+    ...(body != null
+      ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+      : {}),
+  });
+  if (!res.ok) throw new Error(`PUT ${path}: ${res.status}`);
+  return res.json() as Promise<T>;
+};
+
 // --- API ---
 
 export const api = {
@@ -139,6 +162,7 @@ export const api = {
       return get<EntryWithMeta[]>(`/entries${qs ? `?${qs}` : ''}`);
     },
     get: (id: number) => get<EntryWithMeta>(`/entries/${id}`),
+    getContent: (id: number) => get<EntryContent>(`/entries/${id}/content`),
     markRead: (id: number) => post<{ ok: boolean }>(`/entries/${id}/read`),
     star: (id: number, starred: boolean) => post<{ ok: boolean }>(`/entries/${id}/star`, { starred }),
     thumb: (id: number, thumb: 1 | -1 | null) => post<{ ok: boolean }>(`/entries/${id}/thumb`, { thumb }),
@@ -179,6 +203,8 @@ export const api = {
     getOnboarding: () => get<OnboardingStatus>('/config/onboarding'),
     completeOnboarding: (preferences: Record<string, string>, showNoise?: boolean) =>
       post<{ ok: boolean }>('/config/onboarding', { preferences, show_noise: showNoise ?? false }),
+    getSettings: () => get<Settings>('/config/settings'),
+    updateSettings: (settings: Partial<Settings>) => put<{ ok: boolean }>('/config/settings', settings),
   },
 } as const;
 
@@ -204,4 +230,10 @@ export const timeAgo = (epoch: number | null): string => {
   return new Date(epoch * 1000).toLocaleDateString();
 };
 
-export type { EntryWithMeta, EntryTag, Feed, Stats, Tag, CategoryInfo, OnboardingStatus, DashboardData, DashboardFeed, DashboardIndexing };
+export const readTime = (wordCount: number | null): string => {
+  if (!wordCount || wordCount < 50) return '';
+  const minutes = Math.max(1, Math.round(wordCount / 200));
+  return `${minutes} min read`;
+};
+
+export type { EntryWithMeta, EntryTag, EntryContent, Feed, Stats, Tag, CategoryInfo, OnboardingStatus, Settings, DashboardData, DashboardFeed, DashboardIndexing };

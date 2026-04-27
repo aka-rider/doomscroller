@@ -66,6 +66,18 @@ const applyMigrations = (db: Database): void => {
     db.exec('ALTER TABLE entries ADD COLUMN depth_score REAL');
     db.exec('CREATE INDEX IF NOT EXISTS idx_entries_depth ON entries(depth_score) WHERE depth_score IS NOT NULL');
   }
+
+  // v007: Add reader view columns to entries
+  const extractCol = db.query<{ name: string }, []>(
+    "SELECT name FROM pragma_table_info('entries') WHERE name = 'extractive_summary'"
+  ).all();
+  if (extractCol.length === 0) {
+    db.exec('ALTER TABLE entries ADD COLUMN extractive_summary TEXT');
+    db.exec('ALTER TABLE entries ADD COLUMN word_count INTEGER');
+    db.exec('ALTER TABLE entries ADD COLUMN content_full TEXT');
+    db.exec('ALTER TABLE entries ADD COLUMN extracted_at INTEGER');
+    db.exec("CREATE INDEX IF NOT EXISTS idx_entries_unextracted ON entries(id) WHERE extractive_summary IS NULL AND content_html != ''");
+  }
 };
 
 export const closeDb = (): void => {
