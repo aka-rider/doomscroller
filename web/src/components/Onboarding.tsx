@@ -4,12 +4,13 @@ import { TagPreferenceGrid } from './TagPreferenceGrid';
 
 interface OnboardingProps {
   tags: Tag[];
-  onComplete: (preferences: Map<number, string>) => void;
+  onComplete: (preferences: Map<number, string>, showNoise: boolean) => void;
 }
 
 export const Onboarding = (props: OnboardingProps) => {
   const [step, setStep] = createSignal(0);
   const [preferences, setPreferences] = createSignal(new Map<number, string>());
+  const [showNoise, setShowNoise] = createSignal(false);
 
   const handleToggle = (tagId: number, mode: string) => {
     setPreferences((prev) => {
@@ -24,7 +25,7 @@ export const Onboarding = (props: OnboardingProps) => {
   };
 
   const handleComplete = () => {
-    props.onComplete(preferences());
+    props.onComplete(preferences(), showNoise());
   };
 
   return (
@@ -73,10 +74,39 @@ export const Onboarding = (props: OnboardingProps) => {
           </h2>
           <p style={{
             color: "var(--text-secondary)",
-            "margin-bottom": "var(--space-6)",
+            "margin-bottom": "var(--space-4)",
           }}>
             Star topics you love. Cross out topics you don't. Skip the rest.
           </p>
+
+          {/* Show Noise toggle */}
+          <label style={{
+            display: "flex",
+            "align-items": "flex-start",
+            gap: "var(--space-3)",
+            padding: "var(--space-3) var(--space-4)",
+            "border-radius": "var(--radius)",
+            background: "var(--surface-secondary)",
+            "margin-bottom": "var(--space-6)",
+            cursor: "pointer",
+          }}>
+            <input
+              type="checkbox"
+              checked={showNoise()}
+              onChange={(e) => setShowNoise(e.currentTarget.checked)}
+              style={{ "margin-top": "2px", "flex-shrink": "0" }}
+            />
+            <div>
+              <div style={{ "font-weight": "600", "margin-bottom": "var(--space-1)" }}>
+                Show low-quality filler in Your Feed
+              </div>
+              <div style={{ "font-size": "var(--text-sm)", color: "var(--text-secondary)" }}>
+                By default, press releases, hiring ads, marketing copy, and other
+                low-effort filler are automatically hidden. Enable this to see everything.
+              </div>
+            </div>
+          </label>
+
           <TagPreferenceGrid
             tags={props.tags}
             preferences={preferences()}

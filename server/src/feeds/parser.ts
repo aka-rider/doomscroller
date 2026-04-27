@@ -187,7 +187,7 @@ const parseDate = (dateStr: string): number | null => {
 };
 
 // Simple HTML stripping for summary generation.
-// Not security-critical — we're just extracting text for the LLM.
+// Not security-critical — we're just extracting text for embedding.
 const stripHtml = (html: string): string =>
   html
     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')

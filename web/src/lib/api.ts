@@ -4,6 +4,7 @@
 const BASE = '/api';
 
 interface EntryTag {
+  tag_id: number;
   slug: string;
   label: string;
   mode: string;
@@ -24,6 +25,8 @@ interface EntryWithMeta {
   is_read: number;
   is_starred: number;
   tagged_at: number | null;
+  thumb: number | null;  // 1=up, -1=down, null=none
+  depth_score: number | null;  // 0.0=noise → 1.0=dense academic
   feed_title: string;
   feed_site_url: string;
   tags: EntryTag[];
@@ -51,6 +54,25 @@ interface Stats {
   pending_jobs: number;
 }
 
+interface DashboardFeed extends Feed {
+  tagged_count: number;
+}
+
+interface DashboardIndexing {
+  pending_entries: number;
+  running_jobs: number;
+  completed_last_hour: number;
+  avg_batch_duration_sec: number | null;
+  entries_per_minute: number | null;
+  embeddings_healthy: boolean;
+}
+
+interface DashboardData {
+  feeds: DashboardFeed[];
+  indexing: DashboardIndexing;
+  queue: Record<string, number>;
+}
+
 interface Tag {
   id: number;
   slug: string;
@@ -60,6 +82,17 @@ interface Tag {
   use_count: number;
   sort_order: number;
   mode: string;
+}
+
+interface CategoryInfo {
+  slug: string;
+  label: string;
+  entryCount: number;
+}
+
+interface OnboardingStatus {
+  complete: boolean;
+  show_noise: boolean;
 }
 
 // --- Fetcher ---
@@ -91,20 +124,27 @@ const del = async <T>(path: string): Promise<T> => {
 
 export const api = {
   entries: {
-    list: (opts?: { limit?: number; offset?: number; tag?: string; unread?: boolean; filter?: string }) => {
+    list: (opts?: { limit?: number; offset?: number; tag?: string; category?: string; unread?: boolean; filter?: string; starred?: boolean; thumb?: number; noise?: boolean }) => {
       const params = new URLSearchParams();
       if (opts?.limit) params.set('limit', String(opts.limit));
       if (opts?.offset) params.set('offset', String(opts.offset));
       if (opts?.tag) params.set('tag', opts.tag);
+      if (opts?.category) params.set('category', opts.category);
       if (opts?.unread) params.set('unread', 'true');
       if (opts?.filter) params.set('filter', opts.filter);
+      if (opts?.starred) params.set('starred', 'true');
+      if (opts?.thumb != null) params.set('thumb', String(opts.thumb));
+      if (opts?.noise) params.set('noise', 'true');
       const qs = params.toString();
       return get<EntryWithMeta[]>(`/entries${qs ? `?${qs}` : ''}`);
     },
     get: (id: number) => get<EntryWithMeta>(`/entries/${id}`),
     markRead: (id: number) => post<{ ok: boolean }>(`/entries/${id}/read`),
     star: (id: number, starred: boolean) => post<{ ok: boolean }>(`/entries/${id}/star`, { starred }),
+    thumb: (id: number, thumb: 1 | -1 | null) => post<{ ok: boolean }>(`/entries/${id}/thumb`, { thumb }),
   },
+
+  categories: () => get<CategoryInfo[]>('/categories'),
 
   feeds: {
     list: () => get<Feed[]>('/feeds'),
@@ -113,6 +153,8 @@ export const api = {
   },
 
   stats: () => get<Stats>('/stats'),
+
+  dashboard: () => get<DashboardData>('/dashboard'),
 
   tags: {
     list: async (): Promise<Tag[]> => {
@@ -134,13 +176,23 @@ export const api = {
   },
 
   config: {
-    getOnboarding: () => get<{ complete: boolean }>('/config/onboarding'),
-    completeOnboarding: (preferences: Record<string, string>) =>
-      post<{ ok: boolean }>('/config/onboarding', { preferences }),
+    getOnboarding: () => get<OnboardingStatus>('/config/onboarding'),
+    completeOnboarding: (preferences: Record<string, string>, showNoise?: boolean) =>
+      post<{ ok: boolean }>('/config/onboarding', { preferences, show_noise: showNoise ?? false }),
   },
 } as const;
 
 // --- Helpers ---
+
+// Compute a display label from a depth score (not stored in DB — derived on the fly).
+export const contentLabel = (depth: number | null): string => {
+  if (depth === null) return '';
+  if (depth < 0.15) return 'Noise';
+  if (depth < 0.35) return 'Shallow';
+  if (depth < 0.55) return 'Standard';
+  if (depth < 0.75) return 'Substantive';
+  return 'Dense';
+};
 
 export const timeAgo = (epoch: number | null): string => {
   if (!epoch) return '';
@@ -152,4 +204,4 @@ export const timeAgo = (epoch: number | null): string => {
   return new Date(epoch * 1000).toLocaleDateString();
 };
 
-export type { EntryWithMeta, EntryTag, Feed, Stats, Tag };
+export type { EntryWithMeta, EntryTag, Feed, Stats, Tag, CategoryInfo, OnboardingStatus, DashboardData, DashboardFeed, DashboardIndexing };

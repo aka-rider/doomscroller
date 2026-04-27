@@ -1,6 +1,6 @@
 import { Show, For } from 'solid-js';
 import type { EntryWithMeta } from '../lib/api';
-import { timeAgo } from '../lib/api';
+import { timeAgo, contentLabel } from '../lib/api';
 import { TagPill } from './TagPill';
 
 interface EntryCardProps {
@@ -8,6 +8,8 @@ interface EntryCardProps {
   onMarkRead: (id: number) => void;
   onStar: (id: number, starred: boolean) => void;
   onTagClick: (slug: string) => void;
+  onThumb?: (id: number, thumb: 1 | -1 | null) => void;
+  onCycleTagPreference?: (tagId: number, newMode: 'none' | 'whitelist' | 'blacklist') => void;
 }
 
 export const EntryCard = (props: EntryCardProps) => {
@@ -15,6 +17,16 @@ export const EntryCard = (props: EntryCardProps) => {
   const isStarred = () => props.entry.is_starred === 1;
   const isUntagged = () => props.entry.tagged_at === null;
   const entryTags = () => props.entry.tags ?? [];
+  const thumbValue = () => props.entry.thumb;
+  const isNoise = () => props.entry.depth_score !== null && props.entry.depth_score < 0.15;
+  const depthLabel = () => contentLabel(props.entry.depth_score);
+
+  // Entry is "filtered out" when it has tags and ALL tags are blacklisted
+  const isFiltered = () => {
+    const tags = entryTags();
+    if (tags.length === 0) return false;
+    return tags.every(t => t.mode === 'blacklist');
+  };
 
   const handleClick = () => {
     if (!isRead()) {
@@ -24,7 +36,7 @@ export const EntryCard = (props: EntryCardProps) => {
 
   return (
     <article
-      class={`entry-card ${isRead() ? 'is-read' : ''}`}
+      class={`entry-card ${isRead() ? 'is-read' : ''} ${isFiltered() ? 'is-filtered' : ''} ${isNoise() ? 'is-noise' : ''}`}
       onClick={handleClick}
     >
       <div class="entry-card-inner">
@@ -61,20 +73,51 @@ export const EntryCard = (props: EntryCardProps) => {
             <Show when={isUntagged()}>
               <span class="tag-pill tag-pill--pending">Pending</span>
             </Show>
+            <Show when={props.entry.depth_score !== null}>
+              <span class={`tag-pill tag-pill--depth tag-pill--depth-${depthLabel().toLowerCase()}`}>
+                {depthLabel()}
+              </span>
+            </Show>
             <For each={entryTags()}>
               {(tag) => (
                 <TagPill
                   slug={tag.slug}
                   label={tag.label}
+                  tagId={tag.tag_id}
                   mode={tag.mode as 'none' | 'whitelist' | 'blacklist'}
                   onClick={props.onTagClick}
+                  onCyclePreference={props.onCycleTagPreference}
                 />
               )}
             </For>
           </div>
 
-          {/* Star toggle */}
+          {/* Star and thumb buttons */}
           <div class="entry-card-actions">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (props.onThumb) {
+                  props.onThumb(props.entry.id, thumbValue() === 1 ? null : 1);
+                }
+              }}
+              class={`entry-card-thumb ${thumbValue() === 1 ? 'is-active-up' : ''}`}
+              title="Thumb up (u)"
+            >
+              {'\u{1F44D}'}
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (props.onThumb) {
+                  props.onThumb(props.entry.id, thumbValue() === -1 ? null : -1);
+                }
+              }}
+              class={`entry-card-thumb ${thumbValue() === -1 ? 'is-active-down' : ''}`}
+              title="Thumb down (d)"
+            >
+              {'\u{1F44E}'}
+            </button>
             <button
               onClick={(e) => {
                 e.stopPropagation();

@@ -641,7 +641,7 @@ describe('getVisibleEntries', () => {
     expect(visible).toHaveLength(0);
   });
 
-  test('entry with one blacklisted and one neutral tag is visible', () => {
+  test('entry with one blacklisted and one neutral tag is hidden', () => {
     const entryId = insertTestEntry(db, feedId, { tagged_at: 12345 });
     const bad = q.createTag(db, 'spam', 'Spam', '', false);
     const ok = q.createTag(db, 'news', 'News', '', false);
@@ -649,9 +649,10 @@ describe('getVisibleEntries', () => {
     q.addEntryTag(db, entryId, ok, 'llm');
     q.setTagPreference(db, bad, 'blacklist');
     // 'news' has no preference — neutral
+    // An entry is hidden if it has ANY blacklisted tag and no whitelisted tags
 
     const visible = q.getVisibleEntries(db, { limit: 10, offset: 0 });
-    expect(visible).toHaveLength(1);
+    expect(visible).toHaveLength(0);
   });
 
   test('entry with one blacklisted and one whitelisted tag is visible', () => {
@@ -714,12 +715,12 @@ describe('seedBuiltinTags', () => {
     db = createTestDb();
   });
 
-  test('seeds 32 tags on empty table', () => {
+  test('seeds 303 tags on empty table', () => {
     const count = q.seedBuiltinTags(db);
-    expect(count).toBe(32);
+    expect(count).toBe(303);
 
     const tags = q.getAllTags(db);
-    expect(tags).toHaveLength(32);
+    expect(tags).toHaveLength(303);
   });
 
   test('all seeded tags have is_builtin=1', () => {
@@ -741,29 +742,23 @@ describe('seedBuiltinTags', () => {
   test('tags are sorted by sort_order', () => {
     q.seedBuiltinTags(db);
     const tags = q.getAllTags(db);
-    expect(tags[0]!.slug).toBe('politics');
+    expect(tags[0]!.slug).toBe('rust');
     expect(tags[0]!.sort_order).toBe(1);
-    expect(tags[31]!.slug).toBe('deals');
-    expect(tags[31]!.sort_order).toBe(32);
+    // Last tag is 'religion' (history category, sort_order 303)
+    const lastTag = tags[tags.length - 1]!;
+    expect(lastTag.slug).toBe('religion');
+    expect(lastTag.sort_order).toBe(303);
   });
 
   test('correct tag groups assigned', () => {
     q.seedBuiltinTags(db);
     const tags = q.getAllTags(db);
 
-    const newsCount = tags.filter(t => t.tag_group === 'news').length;
-    const techCount = tags.filter(t => t.tag_group === 'tech').length;
-    const scienceCount = tags.filter(t => t.tag_group === 'science').length;
-    const sportsCount = tags.filter(t => t.tag_group === 'sports').length;
-    const cultureCount = tags.filter(t => t.tag_group === 'culture').length;
-    const metaCount = tags.filter(t => t.tag_group === 'meta').length;
+    const topicCount = tags.filter(t => t.tag_group === 'topic').length;
+    const signalCount = tags.filter(t => t.tag_group === 'signal').length;
 
-    expect(newsCount).toBe(6);
-    expect(techCount).toBe(10);
-    expect(scienceCount).toBe(2);
-    expect(sportsCount).toBe(1);
-    expect(cultureCount).toBe(7);
-    expect(metaCount).toBe(6);
+    expect(topicCount).toBe(303);
+    expect(signalCount).toBe(0);
   });
 
   test('does not re-seed when tags already exist', () => {
@@ -772,7 +767,7 @@ describe('seedBuiltinTags', () => {
     expect(count).toBe(0);
 
     const tags = q.getAllTags(db);
-    expect(tags).toHaveLength(32);
+    expect(tags).toHaveLength(303);
   });
 
   test('does not seed when any tags exist (including custom)', () => {

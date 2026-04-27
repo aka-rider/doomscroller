@@ -10,6 +10,7 @@ type Brand<T, B extends string> = T & { readonly [__brand]: B };
 export type FeedId = Brand<number, 'FeedId'>;
 export type EntryId = Brand<number, 'EntryId'>;
 export type TagId = Brand<number, 'TagId'>;
+export type CategoryId = Brand<number, 'CategoryId'>;
 export type JobId = Brand<number, 'JobId'>;
 
 // --- Result type ---
@@ -56,16 +57,32 @@ export interface Entry {
   readonly is_read: number;
   readonly is_starred: number;
   readonly tagged_at: number | null;
+  readonly embedding: Buffer | null;
+  readonly relevance_score: number | null;
+  readonly depth_score: number | null;  // 0.0=noise, 1.0=dense academic
+  readonly thumb: number | null;  // 1=up, -1=down, null=none
 }
 
 export interface Tag {
   readonly id: TagId;
   readonly slug: string;
   readonly label: string | null;
+  readonly description: string | null;
   readonly tag_group: string;
+  readonly category_slug: string | null;
   readonly is_builtin: number;
   readonly use_count: number;
   readonly sort_order: number;
+  readonly embedding: Buffer | null;
+}
+
+export interface Category {
+  readonly id: CategoryId;
+  readonly slug: string;
+  readonly label: string;
+  readonly description: string | null;
+  readonly sort_order: number;
+  readonly embedding: Buffer | null;
 }
 
 export interface EntryTag {
@@ -122,15 +139,13 @@ export type JobPayload =
 export interface AppConfig {
   readonly port: number;
   readonly dataDir: string;
-  readonly llmBaseUrl: string;
-  readonly llmModel: string;
+  readonly embeddingsUrl: string;
   readonly fetchIntervalMin: number;
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
   port: 6767,
   dataDir: './data',
-  llmBaseUrl: 'http://llm:8081',
-  llmModel: 'gemma-4',
+  embeddingsUrl: 'http://embeddings:8081',
   fetchIntervalMin: 30,
 };

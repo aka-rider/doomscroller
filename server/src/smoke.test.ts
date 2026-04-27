@@ -40,9 +40,9 @@ describe('Smoke: Boot & Health', () => {
 
   test('seeding tags populates builtin tags', () => {
     const seeded = queries.seedBuiltinTags(db);
-    expect(seeded).toBe(32);
+    expect(seeded).toBe(303);
     const tags = queries.getAllTags(db);
-    expect(tags.length).toBe(32);
+    expect(tags.length).toBe(303);
     expect(tags.every(t => t.is_builtin === 1)).toBe(true);
   });
 
@@ -138,7 +138,7 @@ describe('Smoke: Entry Flow', () => {
 
     // Tag the entry
     queries.seedBuiltinTags(db);
-    const tag = queries.getTagBySlug(db, 'technology')!;
+    const tag = queries.getTagBySlug(db, 'web-dev')!;
     queries.addEntryTag(db, entryId, tag.id, 'llm');
 
     const res = await req(app, 'GET', '/entries');
@@ -148,7 +148,7 @@ describe('Smoke: Entry Flow', () => {
     expect(entries[0].feed_title).toBe('My Blog');
     expect(entries[0].tags).toBeInstanceOf(Array);
     expect(entries[0].tags.length).toBe(1);
-    expect(entries[0].tags[0].slug).toBe('technology');
+    expect(entries[0].tags[0].slug).toBe('web-dev');
   });
 
   test('marking entry read persists through API', async () => {
@@ -220,8 +220,8 @@ describe('Smoke: Tag Preferences & Filtering', () => {
     // Blacklist the bad tag
     await req(app, 'PUT', `/tags/${badTag}/preference`, { mode: 'blacklist' });
 
-    // Filtered view should hide the blacklisted entry
-    const res = await req(app, 'GET', '/entries?filter=preferences');
+    // Filtered view (default) should hide the blacklisted entry
+    const res = await req(app, 'GET', '/entries');
     const entries = await res.json() as any[];
     const titles = entries.map((e: any) => e.title);
     expect(titles).toContain('Visible');
@@ -235,7 +235,7 @@ describe('Smoke: Tag Preferences & Filtering', () => {
     queries.addEntryTag(db, entry, tag, 'llm');
     queries.setTagPreference(db, tag, 'blacklist');
 
-    const res = await req(app, 'GET', '/entries');
+    const res = await req(app, 'GET', '/entries?filter=all');
     const entries = await res.json() as any[];
     expect(entries.map((e: any) => e.title)).toContain('Blacklisted');
   });
@@ -247,13 +247,14 @@ describe('Smoke: Tag Preferences & Filtering', () => {
     expect(res.status).toBe(200);
     const data = await res.json() as Record<string, any[]>;
 
-    // Should have the expected groups
-    expect(data.news).toBeDefined();
-    expect(data.tech).toBeDefined();
-    expect(data.science).toBeDefined();
+    // Signal tags have been replaced by depth_score
+    expect(data.signal).toBeUndefined();
+
+    // Topic tags should be present
+    expect(data.topic).toBeDefined();
 
     // Each tag should have a mode field
-    for (const tag of data.tech) {
+    for (const tag of data.topic) {
       expect(tag.mode).toBeDefined();
     }
   });
@@ -353,7 +354,7 @@ describe('Smoke: Fever API Compatibility', () => {
     const res = await app.request('http://localhost/fever?api&groups');
     const data = await res.json() as any;
     expect(data.groups).toBeInstanceOf(Array);
-    expect(data.groups.length).toBe(32);
+    expect(data.groups.length).toBe(303);
     expect(data.feeds_groups).toBeDefined();
   });
 });
@@ -387,8 +388,8 @@ describe('Smoke: Onboarding Flow', () => {
   test('completing onboarding persists preferences and flag', async () => {
     queries.seedBuiltinTags(db);
     const tags = queries.getAllTags(db);
-    const politicsTag = tags.find(t => t.slug === 'politics')!;
-    const techTag = tags.find(t => t.slug === 'technology')!;
+    const politicsTag = tags.find(t => t.slug === 'us-politics')!;
+    const techTag = tags.find(t => t.slug === 'web-dev')!;
 
     // Submit onboarding with preferences
     const res = await req(app, 'POST', '/config/onboarding', {
@@ -540,10 +541,10 @@ describe('Smoke: Cross-cutting Concerns', () => {
 
   test('builtin tags cannot be deleted via API', async () => {
     queries.seedBuiltinTags(db);
-    const politics = queries.getTagBySlug(db, 'politics')!;
+    const rust = queries.getTagBySlug(db, 'rust')!;
 
-    const res = await req(app, 'DELETE', `/tags/${politics.id}`);
+    const res = await req(app, 'DELETE', `/tags/${rust.id}`);
     expect(res.status).toBe(400);
-    expect(queries.getTagBySlug(db, 'politics')).not.toBeNull();
+    expect(queries.getTagBySlug(db, 'rust')).not.toBeNull();
   });
 });

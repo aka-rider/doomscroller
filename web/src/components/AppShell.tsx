@@ -2,15 +2,17 @@ import type { JSX } from 'solid-js';
 import { Show } from 'solid-js';
 import { Header } from './Header';
 import { TagSidebar } from './TagSidebar';
+import type { ViewMode } from './TagSidebar';
 
 interface AppShellProps {
   children: JSX.Element;
   showUnreadOnly: boolean;
   onToggleUnread: () => void;
   onOpenSettings: () => void;
-  activeTag: string | null;
-  onSelectTag: (slug: string | null) => void;
-  onCreateTag: () => void;
+  activeCategory: string | null;
+  onSelectCategory: (slug: string | null) => void;
+  activeView: ViewMode;
+  onSelectView: (view: ViewMode) => void;
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
 }
@@ -30,9 +32,10 @@ export const AppShell = (props: AppShellProps) => {
         {/* Desktop sidebar — always rendered, hidden via CSS on mobile */}
         <div class="app-shell-sidebar">
           <TagSidebar
-            activeTag={props.activeTag}
-            onSelectTag={props.onSelectTag}
-            onCreateTag={props.onCreateTag}
+            activeCategory={props.activeCategory}
+            onSelectCategory={props.onSelectCategory}
+            activeView={props.activeView}
+            onSelectView={props.onSelectView}
           />
         </div>
 
@@ -44,13 +47,14 @@ export const AppShell = (props: AppShellProps) => {
           />
           <div class="mobile-drawer">
             <TagSidebar
-              activeTag={props.activeTag}
-              onSelectTag={(slug) => {
-                props.onSelectTag(slug);
+              activeCategory={props.activeCategory}
+              onSelectCategory={(slug) => {
+                props.onSelectCategory(slug);
                 props.onToggleSidebar();
               }}
-              onCreateTag={() => {
-                props.onCreateTag();
+              activeView={props.activeView}
+              onSelectView={(view) => {
+                props.onSelectView(view);
                 props.onToggleSidebar();
               }}
             />

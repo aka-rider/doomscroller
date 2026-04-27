@@ -13,7 +13,7 @@ interface QueueOptions {
 
 const DEFAULT_OPTS: QueueOptions = {
   pollIntervalMs: 2000,
-  staleTimeoutSec: 600, // 10 minutes — generous for LLM inference
+  staleTimeoutSec: 120, // 2 minutes — generous for embedding batch
 };
 
 export const enqueue = (

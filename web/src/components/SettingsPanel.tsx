@@ -1,6 +1,7 @@
 import { createSignal, createResource, For, Show, Suspense } from 'solid-js';
 import { api } from '../lib/api';
 import type { Tag } from '../lib/api';
+import { timeAgo } from '../lib/api';
 import { TagPreferenceGrid } from './TagPreferenceGrid';
 
 interface SettingsPanelProps {
@@ -8,7 +9,7 @@ interface SettingsPanelProps {
 }
 
 export const SettingsPanel = (props: SettingsPanelProps) => {
-  const [activeTab, setActiveTab] = createSignal<'feeds' | 'tags'>('feeds');
+  const [activeTab, setActiveTab] = createSignal<'feeds' | 'tags' | 'status'>('feeds');
 
   return (
     <div class="settings-overlay" onClick={(e) => {
@@ -37,6 +38,12 @@ export const SettingsPanel = (props: SettingsPanelProps) => {
           >
             Tags
           </button>
+          <button
+            class={`settings-tab ${activeTab() === 'status' ? 'active' : ''}`}
+            onClick={() => setActiveTab('status')}
+          >
+            Status
+          </button>
         </nav>
 
         <div class="settings-body">
@@ -45,6 +52,9 @@ export const SettingsPanel = (props: SettingsPanelProps) => {
           </Show>
           <Show when={activeTab() === 'tags'}>
             <TagsTab />
+          </Show>
+          <Show when={activeTab() === 'status'}>
+            <StatusTab />
           </Show>
         </div>
       </div>
@@ -234,6 +244,7 @@ const TagsTab = () => {
   const [tags, { refetch }] = createResource(() => api.tags.list());
   const [newLabel, setNewLabel] = createSignal('');
   const [creating, setCreating] = createSignal(false);
+  const [retagging, setRetagging] = createSignal(false);
   const [error, setError] = createSignal('');
 
   const preferences = (): Map<number, string> => {
@@ -285,15 +296,29 @@ const TagsTab = () => {
   const proposedTags = (): Tag[] => customTags().filter(t => t.tag_group === 'proposed');
   const userTags = (): Tag[] => customTags().filter(t => t.tag_group !== 'proposed');
 
+  const handleRetag = async () => {
+    setRetagging(true);
+    try {
+      await fetch('/api/retag', { method: 'POST' });
+    } catch {
+      // best-effort
+    }
+    setRetagging(false);
+  };
+
   return (
     <div>
-      <h3 style={{
-        "font-family": "var(--font-serif)",
-        "font-size": "var(--text-lg)",
-        "margin-bottom": "var(--space-4)",
-      }}>
-        Tag Preferences
-      </h3>
+      <div style={{ display: "flex", "justify-content": "space-between", "align-items": "center", "margin-bottom": "var(--space-4)" }}>
+        <h3 style={{
+          "font-family": "var(--font-serif)",
+          "font-size": "var(--text-lg)",
+        }}>
+          Tag Preferences
+        </h3>
+        <button class="btn" onClick={handleRetag} disabled={retagging()} style={{ "font-size": "var(--text-xs)" }}>
+          {retagging() ? 'Retagging...' : 'Retag All'}
+        </button>
+      </div>
 
       <Suspense fallback={<p class="meta">Loading tags...</p>}>
         <Show when={tags()}>
@@ -421,6 +446,176 @@ const TagsTab = () => {
           </div>
         </div>
       </Show>
+    </div>
+  );
+};
+
+// --- Status Tab (System Dashboard) ---
+
+const StatusTab = () => {
+  const [data, { refetch }] = createResource(() => api.dashboard());
+
+  const totals = () => {
+    const d = data();
+    if (!d) return { entries: 0, unread: 0, tagged: 0, pending: 0 };
+    let entries = 0, unread = 0, tagged = 0;
+    for (const f of d.feeds) {
+      entries += f.entry_count;
+      unread += f.unread_count;
+      tagged += f.tagged_count;
+    }
+    return { entries, unread, tagged, pending: d.indexing.pending_entries };
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", "justify-content": "space-between", "align-items": "center", "margin-bottom": "var(--space-4)" }}>
+        <h3 style={{
+          "font-family": "var(--font-serif)",
+          "font-size": "var(--text-lg)",
+        }}>
+          System Status
+        </h3>
+        <button class="btn" onClick={() => refetch()} style={{ "font-size": "var(--text-xs)" }}>
+          Refresh
+        </button>
+      </div>
+
+      <Suspense fallback={<p class="meta">Loading dashboard...</p>}>
+        <Show when={data()}>
+          {/* Summary Cards */}
+          <div class="dashboard-cards">
+            <div class="dashboard-card">
+              <span class="dashboard-card-value">{totals().entries}</span>
+              <span class="dashboard-card-label">Entries</span>
+            </div>
+            <div class="dashboard-card">
+              <span class="dashboard-card-value">{totals().unread}</span>
+              <span class="dashboard-card-label">Unread</span>
+            </div>
+            <div class="dashboard-card">
+              <span class="dashboard-card-value">{totals().tagged}</span>
+              <span class="dashboard-card-label">Tagged</span>
+            </div>
+            <div class="dashboard-card">
+              <span class="dashboard-card-value">{totals().pending}</span>
+              <span class="dashboard-card-label">Pending</span>
+            </div>
+          </div>
+
+          {/* Indexing Status */}
+          <div style={{
+            "margin-top": "var(--space-5)",
+            "padding": "var(--space-4)",
+            "background": "var(--bg-tertiary)",
+            "border-radius": "var(--radius-md)",
+            "border": "1px solid var(--border)",
+          }}>
+            <div style={{ display: "flex", "align-items": "center", gap: "var(--space-3)", "margin-bottom": "var(--space-3)" }}>
+              <h4 style={{
+                "font-family": "var(--font-serif)",
+                "font-size": "var(--text-base)",
+                margin: "0",
+              }}>
+                Indexing
+              </h4>
+              <span
+                class={`dashboard-badge ${data()!.indexing.embeddings_healthy ? 'dashboard-badge-ok' : 'dashboard-badge-err'}`}
+              >
+                {data()!.indexing.embeddings_healthy ? 'Embeddings Online' : 'Embeddings Unavailable'}
+              </span>
+            </div>
+            <div class="dashboard-stats-grid">
+              <div class="dashboard-stat">
+                <span class="meta">Running jobs</span>
+                <span class="dashboard-stat-value">{data()!.indexing.running_jobs}</span>
+              </div>
+              <div class="dashboard-stat">
+                <span class="meta">Batches (last hour)</span>
+                <span class="dashboard-stat-value">{data()!.indexing.completed_last_hour}</span>
+              </div>
+              <div class="dashboard-stat">
+                <span class="meta">Avg batch time</span>
+                <span class="dashboard-stat-value">
+                  {data()!.indexing.avg_batch_duration_sec != null
+                    ? `${data()!.indexing.avg_batch_duration_sec}s`
+                    : '—'}
+                </span>
+              </div>
+              <div class="dashboard-stat">
+                <span class="meta">Throughput</span>
+                <span class="dashboard-stat-value">
+                  {data()!.indexing.entries_per_minute != null
+                    ? `~${data()!.indexing.entries_per_minute}/min`
+                    : '—'}
+                </span>
+              </div>
+            </div>
+            {/* Queue breakdown */}
+            <Show when={Object.keys(data()!.queue).length > 0}>
+              <div style={{ "margin-top": "var(--space-3)", "padding-top": "var(--space-3)", "border-top": "1px solid var(--border)" }}>
+                <span class="meta">
+                  Queue: {Object.entries(data()!.queue).map(([s, c]) => `${c} ${s}`).join(' · ')}
+                </span>
+              </div>
+            </Show>
+          </div>
+
+          {/* Feed Table */}
+          <div style={{ "margin-top": "var(--space-5)" }}>
+            <h4 style={{
+              "font-family": "var(--font-serif)",
+              "font-size": "var(--text-base)",
+              "margin-bottom": "var(--space-3)",
+            }}>
+              Feeds
+            </h4>
+            <div class="dashboard-table-wrap">
+              <table class="dashboard-table">
+                <thead>
+                  <tr>
+                    <th>Feed</th>
+                    <th>Entries</th>
+                    <th>Unread</th>
+                    <th>Tagged</th>
+                    <th>Last Fetch</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <For each={data()!.feeds} fallback={<tr><td colspan="6" class="meta">No feeds.</td></tr>}>
+                    {(feed) => (
+                      <tr>
+                        <td class="truncate" style={{ "max-width": "12rem" }} title={feed.url}>
+                          {feed.title || feed.url}
+                        </td>
+                        <td class="dashboard-num">{feed.entry_count}</td>
+                        <td class="dashboard-num">{feed.unread_count}</td>
+                        <td class="dashboard-num">
+                          {feed.tagged_count}/{feed.entry_count}
+                        </td>
+                        <td class="meta">{timeAgo(feed.last_fetched_at)}</td>
+                        <td>
+                          <Show when={feed.last_error} fallback={
+                            <span style={{ color: "var(--relevance-high)" }}>✓</span>
+                          }>
+                            <span
+                              style={{ color: "var(--danger)", cursor: "help" }}
+                              title={feed.last_error ?? ''}
+                            >
+                              ⚠ Error
+                            </span>
+                          </Show>
+                        </td>
+                      </tr>
+                    )}
+                  </For>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </Show>
+      </Suspense>
     </div>
   );
 };

@@ -13,7 +13,7 @@ import { createFeverRoutes } from './api/fever';
 import { startWorker, enqueue, cleanupJobs } from './jobs/queue';
 import { fetchFeed, isNotModified } from './feeds/fetcher';
 import { parseFeed } from './feeds/parser';
-import { tagBatch } from './tagger/batch';
+import { tagBatch, embedMissingTags, embedMissingCategories, embedDepthAnchors } from './tagger/batch';
 import type { JobHandler } from './jobs/queue';
 
 // --- Config from environment ---
@@ -22,8 +22,7 @@ const config: AppConfig = {
   ...DEFAULT_CONFIG,
   port: Number(process.env['PORT'] ?? DEFAULT_CONFIG.port),
   dataDir: process.env['DATA_DIR'] ?? DEFAULT_CONFIG.dataDir,
-  llmBaseUrl: process.env['LLM_BASE_URL'] ?? DEFAULT_CONFIG.llmBaseUrl,
-  llmModel: process.env['LLM_MODEL'] ?? DEFAULT_CONFIG.llmModel,
+  embeddingsUrl: process.env['EMBEDDINGS_URL'] ?? DEFAULT_CONFIG.embeddingsUrl,
 };
 
 // Ensure data directory exists
@@ -36,7 +35,12 @@ if (!existsSync(config.dataDir)) {
 const db = initDb(config);
 console.log(`[init] Database at ${config.dataDir}/doomscroller.db`);
 
-// --- Seed built-in tags on first boot ---
+// --- Seed built-in categories and tags on first boot ---
+
+const seededCats = queries.seedBuiltinCategories(db);
+if (seededCats > 0) {
+  console.log(`[init] Seeded ${seededCats} built-in categories`);
+}
 
 const seeded = queries.seedBuiltinTags(db);
 if (seeded > 0) {
@@ -49,6 +53,51 @@ const seededFeeds = queries.seedStarterFeeds(db);
 if (seededFeeds > 0) {
   console.log(`[init] Seeded ${seededFeeds} starter feeds`);
 }
+
+// --- Embed tag descriptions, category descriptions, and depth anchors on startup ---
+
+const initTagEmbeddings = async (retries = 5, delaySec = 5): Promise<void> => {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    // Embed categories
+    const embeddedCats = await embedMissingCategories(db, config);
+    if (embeddedCats > 0) {
+      console.log(`[init] Embedded ${embeddedCats} category descriptions`);
+    }
+
+    // Embed depth anchors (always re-embed on startup since they live in memory)
+    const anchorsOk = await embedDepthAnchors(config);
+    if (!anchorsOk) {
+      if (attempt < retries) {
+        console.log(`[init] Embedding sidecar not ready, retry ${attempt}/${retries} in ${delaySec}s...`);
+        await new Promise((r) => setTimeout(r, delaySec * 1000));
+        continue;
+      }
+      console.error('[init] Could not embed depth anchors after retries — depth scoring will be skipped');
+      return;
+    }
+
+    // Embed tags
+    const embedded = await embedMissingTags(db, config);
+    if (embedded > 0) {
+      console.log(`[init] Embedded ${embedded} tag descriptions`);
+    }
+
+    // Check if there are still tags without embeddings:
+    const remaining = queries.getTagsWithoutEmbeddings(db);
+    if (remaining.length === 0) return; // all done
+
+    if (attempt < retries) {
+      console.log(`[init] Tags not fully embedded, retry ${attempt}/${retries} in ${delaySec}s...`);
+      await new Promise((r) => setTimeout(r, delaySec * 1000));
+    }
+  }
+  console.error('[init] Could not embed tags after retries — tagging will use fallback on next interval');
+};
+
+// Fire and forget — don't block startup. Tagging will skip until embeddings are ready.
+initTagEmbeddings().catch((err) => {
+  console.error('[init] Failed to embed tags:', err);
+});
 
 // --- Job handlers ---
 
@@ -156,8 +205,8 @@ setInterval(scheduleFeedFetches, config.fetchIntervalMin * 60 * 1000);
 // Initial tagging on startup
 enqueue(db, 'tag_batch', {});
 
-// Recurring: tag untagged entries every 5 minutes
-setInterval(() => enqueue(db, 'tag_batch', {}), 5 * 60 * 1000);
+// Recurring: tag untagged entries every 1 minute (embedding is fast)
+setInterval(() => enqueue(db, 'tag_batch', {}), 1 * 60 * 1000);
 
 // Recurring: cleanup daily
 setInterval(() => enqueue(db, 'cleanup', {}), 86400 * 1000);

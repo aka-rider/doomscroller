@@ -1,34 +1,4 @@
 services:
-  # One-time model downloader — exits after models are cached in the volume
-  model-init:
-    image: ghcr.io/ggml-org/llama.cpp:server
-    volumes:
-      - models:/models
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        set -e
-        LLM=/models/gemma-4-E4B-it-Q4_K_M.gguf
-        LLM_URL="https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf"
-
-        if [ -f "$$LLM" ]; then
-          SIZE=$$(stat -c%s "$$LLM" 2>/dev/null || stat -f%z "$$LLM" 2>/dev/null || echo 0)
-          if [ "$$SIZE" -gt 1000000000 ]; then
-            echo "[model-init] Gemma 4 E4B already cached ($$(echo "$$SIZE / 1048576" | bc)MB)"
-          else
-            echo "[model-init] Gemma 4 E4B incomplete, re-downloading..."
-            rm -f "$$LLM"
-            curl -C - -L --progress-bar -o "$$LLM.tmp" "$$LLM_URL"
-            mv "$$LLM.tmp" "$$LLM"
-          fi
-        else
-          echo "[model-init] Downloading Gemma 4 E4B (~5GB)..."
-          curl -C - -L --progress-bar -o "$$LLM.tmp" "$$LLM_URL"
-          mv "$$LLM.tmp" "$$LLM"
-        fi
-        echo "[model-init] All models ready"
-    restart: "no"
-
   # Main application: RSS reader + API + Web UI
   doomscroller:
     build: .
@@ -39,45 +9,27 @@ services:
     environment:
       - PORT=6767
       - DATA_DIR=/app/data
-      - LLM_BASE_URL=http://llm:8081
-      - LLM_MODEL=gemma-4
+      - EMBEDDINGS_URL=http://embeddings:8081
     depends_on:
-      model-init:
-        condition: service_completed_successfully
-      llm:
-        condition: service_started
+      embeddings:
+        condition: service_healthy
     restart: unless-stopped
     read_only: true
     tmpfs:
       - /tmp
 
-  # Local LLM inference: llama.cpp with Gemma 4 (unsloth quantized)
-  llm:
-    image: ghcr.io/ggml-org/llama.cpp:server
-    ports:
-      - "8081:8081"
-    volumes:
-      - models:/models:ro
-    depends_on:
-      model-init:
-        condition: service_completed_successfully
-    command: >
-      --host 0.0.0.0
-      --port 8081
-      --model /models/gemma-4-E4B-it-Q4_K_M.gguf
-      --ctx-size 8192
-      --threads 4
-      --batch-size 512
-      --n-predict 512
+  # Embedding model sidecar: nomic-embed-text-v1.5 via llama-server
+  embeddings:
+    build: ./embeddings
+    expose:
+      - "8081"
     restart: unless-stopped
-    # For NVIDIA GPU:
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - capabilities: [gpu]
-
-
-volumes:
-  models:
-    driver: local
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8081/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 30s

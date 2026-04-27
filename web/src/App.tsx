@@ -5,6 +5,7 @@ import { EntryCard } from './components/EntryCard';
 import { SettingsPanel } from './components/SettingsPanel';
 import { Onboarding } from './components/Onboarding';
 import type { Tag } from './lib/api';
+import type { ViewMode } from './components/TagSidebar';
 
 export const App = () => {
   const [onboardingDone, setOnboardingDone] = createSignal<boolean | null>(null);
@@ -26,13 +27,13 @@ export const App = () => {
   };
   checkOnboarding();
 
-  const handleOnboardingComplete = async (preferences: Map<number, string>) => {
+  const handleOnboardingComplete = async (preferences: Map<number, string>, showNoise: boolean) => {
     const prefObj: Record<string, string> = {};
     for (const [id, mode] of preferences) {
       prefObj[String(id)] = mode;
     }
     try {
-      await api.config.completeOnboarding(prefObj);
+      await api.config.completeOnboarding(prefObj, showNoise);
     } catch {
       // best-effort
     }
@@ -41,19 +42,40 @@ export const App = () => {
   const [showUnreadOnly, setShowUnreadOnly] = createSignal(false);
   const [showSettings, setShowSettings] = createSignal(false);
   const [focusIndex, setFocusIndex] = createSignal(-1);
-  const [activeTag, setActiveTag] = createSignal<string | null>(null);
+  const [activeCategory, setActiveCategory] = createSignal<string | null>(null);
+  const [activeView, setActiveView] = createSignal<ViewMode>('feed');
   const [sidebarOpen, setSidebarOpen] = createSignal(false);
 
+  // Resource fetcher adapts based on active view
   const [entries, { mutate: mutateEntries }] = createResource(
     () => ({
       unread: showUnreadOnly(),
-      tag: activeTag(),
+      category: activeCategory(),
+      view: activeView(),
     }),
-    (opts) => api.entries.list({
-      limit: 50,
-      unread: opts.unread,
-      ...(opts.tag != null ? { tag: opts.tag } : { filter: 'preferences' }),
-    }),
+    (opts) => {
+      switch (opts.view) {
+        case 'favorites':
+          return api.entries.list({ limit: 50, starred: true });
+        case 'trash':
+          return api.entries.list({ limit: 50, thumb: -1 });
+        case 'noise':
+          return api.entries.list({ limit: 50, noise: true });
+        case 'everything':
+          return api.entries.list({
+            limit: 50,
+            filter: 'all',
+            unread: opts.unread,
+            ...(opts.category != null ? { category: opts.category } : {}),
+          });
+        default: // 'feed'
+          return api.entries.list({
+            limit: 50,
+            unread: opts.unread,
+            ...(opts.category != null ? { category: opts.category } : {}),
+          });
+      }
+    },
   );
 
   const handleMarkRead = async (id: number) => {
@@ -76,16 +98,57 @@ export const App = () => {
     }
   };
 
-  const handleSelectTag = (slug: string | null) => {
-    setActiveTag(slug);
+  const handleThumb = async (id: number, thumb: 1 | -1 | null) => {
+    const prev = entries() ?? [];
+    if (thumb === -1) {
+      // Thumb down: remove from list immediately (optimistic)
+      mutateEntries(prev.filter(e => e.id !== id));
+    } else {
+      mutateEntries(prev.map(e => e.id === id ? { ...e, thumb } : e));
+    }
+    try {
+      await api.entries.thumb(id, thumb);
+    } catch {
+      mutateEntries(prev);
+    }
   };
 
-  const handleCreateTag = () => {
-    // Tag creation is handled inside TagSidebar
+  // Debounced tag preference cycling
+  const prefTimers = new Map<number, ReturnType<typeof setTimeout>>();
+  const handleCycleTagPreference = (tagId: number, newMode: 'none' | 'whitelist' | 'blacklist') => {
+    // Optimistic update: update all entry tags in the current list
+    const prev = entries() ?? [];
+    mutateEntries(prev.map(e => ({
+      ...e,
+      tags: e.tags.map(t => t.tag_id === tagId ? { ...t, mode: newMode } : t),
+    })));
+
+    // Debounce the API call
+    const existing = prefTimers.get(tagId);
+    if (existing) clearTimeout(existing);
+    prefTimers.set(tagId, setTimeout(async () => {
+      prefTimers.delete(tagId);
+      try {
+        await api.tags.setPreference(tagId, newMode);
+      } catch {
+        mutateEntries(prev);
+      }
+    }, 400));
   };
 
-  const handleTagClick = (slug: string) => {
-    setActiveTag(slug);
+  const handleSelectCategory = (slug: string | null) => {
+    setActiveCategory(slug);
+  };
+
+  const handleSelectView = (view: ViewMode) => {
+    setActiveView(view);
+    if (view !== 'feed') {
+      setActiveCategory(null);
+    }
+  };
+
+  const handleTagClick = (_slug: string) => {
+    // When clicking a tag pill on an entry, no-op for now (categories are the nav)
   };
 
   // --- Keyboard navigation ---
@@ -143,6 +206,22 @@ export const App = () => {
         }
         break;
       }
+      case 'u': {
+        if (idx >= 0 && idx < list.length) {
+          e.preventDefault();
+          const entry = list[idx]!;
+          handleThumb(entry.id, entry.thumb === 1 ? null : 1);
+        }
+        break;
+      }
+      case 'd': {
+        if (idx >= 0 && idx < list.length) {
+          e.preventDefault();
+          const entry = list[idx]!;
+          handleThumb(entry.id, entry.thumb === -1 ? null : -1);
+        }
+        break;
+      }
       case ',': {
         e.preventDefault();
         setShowSettings(true);
@@ -184,9 +263,10 @@ export const App = () => {
           showUnreadOnly={showUnreadOnly()}
           onToggleUnread={() => setShowUnreadOnly(!showUnreadOnly())}
           onOpenSettings={() => setShowSettings(true)}
-          activeTag={activeTag()}
-          onSelectTag={handleSelectTag}
-          onCreateTag={handleCreateTag}
+          activeCategory={activeCategory()}
+          onSelectCategory={handleSelectCategory}
+          activeView={activeView()}
+          onSelectView={handleSelectView}
           sidebarOpen={sidebarOpen()}
           onToggleSidebar={() => setSidebarOpen(!sidebarOpen())}
         >
@@ -226,6 +306,8 @@ export const App = () => {
                       onMarkRead={handleMarkRead}
                       onStar={handleStar}
                       onTagClick={handleTagClick}
+                      onThumb={handleThumb}
+                      onCycleTagPreference={handleCycleTagPreference}
                     />
                   )}
                 </For>

@@ -1,255 +1,272 @@
-import { describe, test, expect, mock, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { createTestDb, insertTestFeed, insertTestEntry, TEST_CONFIG } from '../test-utils';
 import * as queries from '../db/queries';
 import type { EntryId, TagId, AppConfig } from '../types';
-import { Ok, Err } from '../types';
-import type { TagResponse } from './client';
+import { float32ToBuffer, bufferToFloat32, buildEmbeddingInput, EMBEDDING_DIM } from './embeddings';
+import { assignDepth, setDepthAnchorEmbeddings } from './batch';
+import { DEPTH_ANCHORS } from '../taxonomy';
 
-// We mock the client module to avoid actual HTTP calls
-import * as client from './client';
-import { tagBatch } from './batch';
+// --- Utility: cosine similarity (same as batch.ts) ---
+const cosineSimilarity = (a: Float32Array, b: Float32Array): number => {
+  let dot = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i]! * b[i]!;
+  }
+  return dot;
+};
 
-// --- Mock setup ---
+// --- Utility: create a normalized random vector ---
+const randomVector = (dim: number = EMBEDDING_DIM): Float32Array => {
+  const vec = new Float32Array(dim);
+  let norm = 0;
+  for (let i = 0; i < dim; i++) {
+    vec[i] = Math.random() - 0.5;
+    norm += vec[i]! * vec[i]!;
+  }
+  norm = Math.sqrt(norm);
+  for (let i = 0; i < dim; i++) {
+    vec[i]! /= norm;
+  }
+  return vec;
+};
 
-const mockHealthCheck = mock<typeof client.healthCheck>();
-const mockTagArticle = mock<typeof client.tagArticle>();
+describe('cosineSimilarity', () => {
+  test('identical vectors have similarity 1.0', () => {
+    const vec = randomVector();
+    expect(cosineSimilarity(vec, vec)).toBeCloseTo(1.0, 4);
+  });
 
-// Override the module-level functions used by batch.ts
-// We use Bun's module mock via direct property override
-import * as clientModule from './client';
+  test('opposite vectors have similarity -1.0', () => {
+    const vec = randomVector();
+    const neg = new Float32Array(vec.length);
+    for (let i = 0; i < vec.length; i++) {
+      neg[i] = -vec[i]!;
+    }
+    expect(cosineSimilarity(vec, neg)).toBeCloseTo(-1.0, 4);
+  });
 
-describe('tagBatch', () => {
+  test('orthogonal vectors have similarity ~0', () => {
+    // Use unit vectors along different axes
+    const a = new Float32Array(EMBEDDING_DIM);
+    a[0] = 1;
+    const b = new Float32Array(EMBEDDING_DIM);
+    b[1] = 1;
+    expect(cosineSimilarity(a, b)).toBe(0);
+  });
+});
+
+describe('float32 <-> Buffer conversion', () => {
+  test('roundtrips correctly', () => {
+    const original = randomVector();
+    const buf = float32ToBuffer(original);
+    expect(buf.byteLength).toBe(EMBEDDING_DIM * 4);
+
+    const restored = bufferToFloat32(buf);
+    expect(restored.length).toBe(EMBEDDING_DIM);
+    for (let i = 0; i < EMBEDDING_DIM; i++) {
+      expect(restored[i]).toBeCloseTo(original[i]!, 6);
+    }
+  });
+});
+
+describe('buildEmbeddingInput', () => {
+  test('builds input from entry fields', () => {
+    const input = buildEmbeddingInput({
+      title: 'Test Article',
+      feed_title: 'Test Feed',
+      summary: 'A summary',
+      content_html: '<p>Some content here</p>',
+    });
+
+    expect(input).toContain('Test Article | Test Feed');
+    expect(input).toContain('A summary');
+    expect(input).toContain('Some content here');
+    expect(input).not.toContain('<p>');
+  });
+
+  test('uses content as fallback when summary is empty', () => {
+    const input = buildEmbeddingInput({
+      title: 'Test',
+      feed_title: 'Feed',
+      summary: '',
+      content_html: '<div>Content as summary fallback</div>',
+    });
+
+    expect(input).toContain('Content as summary fallback');
+  });
+
+  test('truncates long content', () => {
+    const longContent = '<p>' + 'x'.repeat(10000) + '</p>';
+    const input = buildEmbeddingInput({
+      title: 'Test',
+      feed_title: 'Feed',
+      summary: 'Summary',
+      content_html: longContent,
+    });
+
+    // Body portion should be limited to ~4000 chars
+    expect(input.length).toBeLessThan(5000);
+  });
+});
+
+describe('tag embedding storage', () => {
   let db: Database;
-  let config: AppConfig;
 
   beforeEach(() => {
     db = createTestDb();
     queries.seedBuiltinTags(db);
-    config = { ...TEST_CONFIG };
-
-    // Reset mocks
-    mockHealthCheck.mockReset();
-    mockTagArticle.mockReset();
   });
 
-  // Helper that creates a tagBatch variant with injected mock functions
-  const tagBatchWithMocks = async (
-    db: Database,
-    config: AppConfig,
-    opts: {
-      healthy: boolean;
-      tagFn?: (systemPrompt: string, userMessage: string) => ReturnType<typeof client.tagArticle>;
-    },
-  ): Promise<number> => {
-    // We'll reimplement the batch logic inline using mocks instead of importing
-    // This approach avoids ESM module mocking complexity
-    const { healthCheck: _, tagArticle: __, ...rest } = clientModule;
+  test('setTagEmbedding stores and retrieves embedding', () => {
+    const tags = queries.getAllTags(db);
+    const tag = tags[0]!;
+    const vec = randomVector();
+    const buf = float32ToBuffer(vec);
 
-    const llmConfig = { baseUrl: config.llmBaseUrl, model: config.llmModel };
+    queries.setTagEmbedding(db, tag.id, buf);
 
-    if (!opts.healthy) {
-      console.log('[tagger] LLM unavailable, skipping batch');
-      return 0;
+    const rows = queries.getAllTagEmbeddings(db);
+    const stored = rows.find(r => r.id === tag.id);
+    expect(stored).toBeDefined();
+
+    const restored = bufferToFloat32(stored!.embedding);
+    for (let i = 0; i < EMBEDDING_DIM; i++) {
+      expect(restored[i]).toBeCloseTo(vec[i]!, 6);
     }
-
-    const allSlugs = queries.getAllTagSlugs(db);
-    const { buildSystemPrompt, buildUserMessage } = await import('./prompt');
-    const systemPrompt = buildSystemPrompt(allSlugs);
-
-    const entryIds = queries.getUntaggedEntryIds(db, 20);
-    if (entryIds.length === 0) return 0;
-
-    let tagged = 0;
-
-    for (const entryId of entryIds) {
-      const entry = queries.getEntryById(db, entryId);
-      if (!entry) continue;
-
-      const feed = queries.getFeedById(db, entry.feed_id);
-      const source = feed?.title ?? '';
-
-      const userMessage = buildUserMessage({
-        title: entry.title,
-        source,
-        summary: entry.summary,
-        content: entry.content_html,
-      });
-
-      const result = opts.tagFn
-        ? await opts.tagFn(systemPrompt, userMessage)
-        : Err('no tagFn configured');
-
-      if (!result.ok) {
-        continue;
-      }
-
-      for (const slug of result.value.tags) {
-        const tag = queries.getTagBySlug(db, slug);
-        if (tag) {
-          queries.addEntryTag(db, entryId, tag.id, 'llm');
-          queries.incrementTagUseCount(db, tag.id);
-        }
-      }
-
-      if (result.value.new_tags) {
-        for (const slug of result.value.new_tags) {
-          const existing = queries.getTagBySlug(db, slug);
-          if (existing) {
-            queries.addEntryTag(db, entryId, existing.id, 'llm');
-            queries.incrementTagUseCount(db, existing.id);
-          } else {
-            const label = slug.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-            const newTagId = queries.createTag(db, slug, label, 'proposed', false);
-            queries.addEntryTag(db, entryId, newTagId, 'llm');
-            queries.incrementTagUseCount(db, newTagId);
-          }
-        }
-      }
-
-      queries.markEntryTagged(db, entryId);
-      tagged++;
-    }
-
-    return tagged;
-  };
-
-  test('entries get tagged with existing tags', async () => {
-    const feedId = insertTestFeed(db);
-    const entryId = insertTestEntry(db, feedId, { title: 'AI breakthrough' });
-
-    const result = await tagBatchWithMocks(db, config, {
-      healthy: true,
-      tagFn: async () => Ok({ tags: ['ai-ml', 'technology'] } as TagResponse),
-    });
-
-    expect(result).toBe(1);
-
-    // Check entry_tags were created
-    const tags = queries.getTagsForEntry(db, entryId);
-    const slugs = tags.map(t => t.slug);
-    expect(slugs).toContain('ai-ml');
-    expect(slugs).toContain('technology');
-
-    // Check use_count was incremented
-    const aiTag = queries.getTagBySlug(db, 'ai-ml');
-    expect(aiTag!.use_count).toBe(1);
   });
 
-  test('new proposed tags get created', async () => {
-    const feedId = insertTestFeed(db);
-    const entryId = insertTestEntry(db, feedId, { title: 'Home automation guide' });
+  test('setTagEmbedding rejects wrong-sized buffer', () => {
+    const tags = queries.getAllTags(db);
+    const tag = tags[0]!;
+    const badBuf = Buffer.alloc(100); // wrong size
 
-    const result = await tagBatchWithMocks(db, config, {
-      healthy: true,
-      tagFn: async () => Ok({
-        tags: ['technology'],
-        new_tags: ['home-automation'],
-      } as TagResponse),
-    });
+    expect(() => queries.setTagEmbedding(db, tag.id, badBuf)).toThrow();
+  });
+});
 
-    expect(result).toBe(1);
+describe('entry embedding storage', () => {
+  let db: Database;
 
-    // Check new tag was created
-    const newTag = queries.getTagBySlug(db, 'home-automation');
-    expect(newTag).not.toBeNull();
-    expect(newTag!.tag_group).toBe('proposed');
-    expect(newTag!.is_builtin).toBe(0);
-    expect(newTag!.use_count).toBe(1);
-
-    // Check entry has the new tag
-    const tags = queries.getTagsForEntry(db, entryId);
-    const slugs = tags.map(t => t.slug);
-    expect(slugs).toContain('home-automation');
-    expect(slugs).toContain('technology');
+  beforeEach(() => {
+    db = createTestDb();
   });
 
-  test('entry.tagged_at gets set', async () => {
+  test('setEntryEmbedding stores embedding on entry', () => {
     const feedId = insertTestFeed(db);
     const entryId = insertTestEntry(db, feedId);
+    const vec = randomVector();
 
-    // Before tagging
-    const before = queries.getEntryById(db, entryId);
-    expect(before!.tagged_at).toBeNull();
+    queries.setEntryEmbedding(db, entryId, float32ToBuffer(vec));
 
-    await tagBatchWithMocks(db, config, {
-      healthy: true,
-      tagFn: async () => Ok({ tags: ['science'] } as TagResponse),
-    });
+    // Verify via direct query
+    const row = db.query<{ embedding: Buffer }, [number]>(
+      'SELECT embedding FROM entries WHERE id = ?',
+    ).get(entryId as unknown as number);
 
-    // After tagging
-    const after = queries.getEntryById(db, entryId);
-    expect(after!.tagged_at).not.toBeNull();
-    expect(typeof after!.tagged_at).toBe('number');
+    expect(row).toBeDefined();
+    expect(row!.embedding.byteLength).toBe(EMBEDDING_DIM * 4);
   });
 
-  test('LLM failure does not crash batch (skips entry)', async () => {
+  test('setEntryEmbedding rejects wrong-sized buffer', () => {
     const feedId = insertTestFeed(db);
-    insertTestEntry(db, feedId, { title: 'Entry 1' });
-    insertTestEntry(db, feedId, { title: 'Entry 2' });
+    const entryId = insertTestEntry(db, feedId);
+    const badBuf = Buffer.alloc(100);
 
-    let callCount = 0;
-    const result = await tagBatchWithMocks(db, config, {
-      healthy: true,
-      tagFn: async () => {
-        callCount++;
-        if (callCount === 1) return Err('LLM error');
-        return Ok({ tags: ['science'] } as TagResponse);
-      },
-    });
+    expect(() => queries.setEntryEmbedding(db, entryId, badBuf)).toThrow();
+  });
+});
 
-    // Only one of two entries tagged successfully
-    expect(result).toBe(1);
+describe('getUntaggedEntries', () => {
+  let db: Database;
+
+  beforeEach(() => {
+    db = createTestDb();
   });
 
-  test('empty batch (no untagged entries) returns 0', async () => {
-    // No entries at all
-    const result = await tagBatchWithMocks(db, config, {
-      healthy: true,
-      tagFn: async () => Ok({ tags: ['science'] } as TagResponse),
-    });
-    expect(result).toBe(0);
+  test('returns entries with feed_title', () => {
+    const feedId = insertTestFeed(db, { title: 'My Feed' });
+    insertTestEntry(db, feedId, { title: 'Article 1' });
+
+    const entries = queries.getUntaggedEntries(db, 10);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.feed_title).toBe('My Feed');
+    expect(entries[0]!.title).toBe('Article 1');
   });
 
-  test('already-tagged entries are skipped', async () => {
+  test('excludes already-tagged entries', () => {
     const feedId = insertTestFeed(db);
-    // Insert entry that is already tagged
     insertTestEntry(db, feedId, { tagged_at: Math.floor(Date.now() / 1000) });
+    insertTestEntry(db, feedId, { title: 'Untagged' });
 
-    const result = await tagBatchWithMocks(db, config, {
-      healthy: true,
-      tagFn: async () => Ok({ tags: ['science'] } as TagResponse),
-    });
-    expect(result).toBe(0);
+    const entries = queries.getUntaggedEntries(db, 10);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.title).toBe('Untagged');
+  });
+});
+
+describe('assignDepth', () => {
+  test('returns null when no depth anchors are set', () => {
+    // Reset state by passing empty array
+    setDepthAnchorEmbeddings([]);
+    const vec = randomVector();
+    expect(assignDepth(vec)).toBeNull();
   });
 
-  test('LLM unavailable returns 0', async () => {
-    const feedId = insertTestFeed(db);
-    insertTestEntry(db, feedId);
+  test('returns a value in [0, 1] when anchors are set', () => {
+    // Create 5 random normalized anchor embeddings
+    const anchors = DEPTH_ANCHORS.map(() => randomVector());
+    setDepthAnchorEmbeddings(anchors);
 
-    const result = await tagBatchWithMocks(db, config, { healthy: false });
-    expect(result).toBe(0);
+    const vec = randomVector();
+    const score = assignDepth(vec);
+    expect(score).not.toBeNull();
+    expect(score!).toBeGreaterThanOrEqual(0);
+    expect(score!).toBeLessThanOrEqual(1);
   });
 
-  test('existing new_tag slug reuses the tag', async () => {
-    const feedId = insertTestFeed(db);
-    const entryId = insertTestEntry(db, feedId);
+  test('score biased toward matching anchor weight', () => {
+    // If the article embedding equals the 'dense' anchor exactly,
+    // softmax concentrates probability on that anchor (weight=0.9).
+    // With 5 anchors and random others, the score is pulled toward ~0.6.
+    const denseIndex = DEPTH_ANCHORS.findIndex(a => a.key === 'dense');
+    const anchors = DEPTH_ANCHORS.map(() => randomVector());
+    const denseVec = anchors[denseIndex]!;
 
-    // Pre-create the tag that the LLM will "propose"
-    queries.createTag(db, 'pre-existing', 'Pre Existing', 'custom', false);
+    setDepthAnchorEmbeddings(anchors);
 
-    await tagBatchWithMocks(db, config, {
-      healthy: true,
-      tagFn: async () => Ok({
-        tags: ['science'],
-        new_tags: ['pre-existing'],
-      } as TagResponse),
-    });
+    // Article is exactly the dense anchor
+    const score = assignDepth(denseVec);
+    expect(score).not.toBeNull();
+    // Should be noticeably above the midpoint (0.5)
+    expect(score!).toBeGreaterThan(0.55);
+  });
 
-    // Should reuse, not create duplicate
-    const allTags = queries.getAllTags(db);
-    const matches = allTags.filter(t => t.slug === 'pre-existing');
-    expect(matches).toHaveLength(1);
-    expect(matches[0].use_count).toBe(1);
+  test('score biased toward noise anchor weight', () => {
+    const noiseIndex = DEPTH_ANCHORS.findIndex(a => a.key === 'noise');
+    const anchors = DEPTH_ANCHORS.map(() => randomVector());
+    const noiseVec = anchors[noiseIndex]!;
+
+    setDepthAnchorEmbeddings(anchors);
+
+    const score = assignDepth(noiseVec);
+    expect(score).not.toBeNull();
+    // Should be noticeably below the midpoint (0.5)
+    expect(score!).toBeLessThan(0.45);
+  });
+
+  test('softmax weights sum to 1', () => {
+    // Verify the math: for identical similarities to all anchors,
+    // softmax gives equal probabilities → weighted average = mean of weights
+    const meanWeight = DEPTH_ANCHORS.reduce((s, a) => s + a.weight, 0) / DEPTH_ANCHORS.length;
+
+    // Create anchors all equal to each other (maximum similarity = 1.0 to all)
+    const sharedVec = randomVector();
+    const anchors = DEPTH_ANCHORS.map(() => sharedVec);
+    setDepthAnchorEmbeddings(anchors);
+
+    const score = assignDepth(sharedVec);
+    expect(score).not.toBeNull();
+    expect(score!).toBeCloseTo(meanWeight, 3);
   });
 });

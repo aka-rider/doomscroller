@@ -3,7 +3,14 @@ import { z } from 'zod';
 import type { Database } from 'bun:sqlite';
 import type { FeedId, EntryId, TagId, Tag, AppConfig } from '../types';
 import * as queries from '../db/queries';
-import { enqueue } from '../jobs/queue';
+import { enqueue, getQueueStats } from '../jobs/queue';
+import { healthCheck } from '../tagger/embeddings';
+import type { EmbeddingConfig } from '../tagger/embeddings';
+import { updatePreferenceVector, rescoreAllEntries } from '../scorer/preference';
+import { retagAllEntries } from '../tagger/batch';
+
+import { CATEGORIES, CATEGORY_MAP } from '../categories';
+import type { CategoryView } from '../categories';
 
 export const createApiRoutes = (db: Database, config: AppConfig): Hono => {
   const api = new Hono();
@@ -46,27 +53,71 @@ export const createApiRoutes = (db: Database, config: AppConfig): Hono => {
     limit: z.coerce.number().int().min(1).max(200).default(50),
     offset: z.coerce.number().int().min(0).default(0),
     tag: z.string().optional(),
+    category: z.string().optional(),
     unread: z.enum(['true', 'false']).optional(),
-    filter: z.enum(['preferences']).optional(),
+    filter: z.enum(['all']).optional(),
+    starred: z.enum(['true']).optional(),
+    thumb: z.enum(['-1']).optional(),
+    noise: z.enum(['true']).optional(),  // Show noise-only view
   });
 
   api.get('/entries', (c) => {
     const params = entryListSchema.safeParse(c.req.query());
     if (!params.success) return c.json({ error: params.error.message }, 400);
 
+    const { limit, offset } = params.data;
+
+    // Starred (favorites) view
+    if (params.data.starred === 'true') {
+      const entries = queries.getStarredEntries(db, { limit, offset });
+      const entryIds = entries.map(e => e.id);
+      const tagMap = queries.getTagsForEntries(db, entryIds);
+      return c.json(entries.map(e => ({ ...e, tags: tagMap.get(e.id) ?? [] })));
+    }
+
+    // Trash (dismissed) view
+    if (params.data.thumb === '-1') {
+      const entries = queries.getDismissedEntries(db, { limit, offset });
+      const entryIds = entries.map(e => e.id);
+      const tagMap = queries.getTagsForEntries(db, entryIds);
+      return c.json(entries.map(e => ({ ...e, tags: tagMap.get(e.id) ?? [] })));
+    }
+
+    // Noise view
+    if (params.data.noise === 'true') {
+      const entries = queries.getNoiseEntries(db, { limit, offset });
+      const entryIds = entries.map(e => e.id);
+      const tagMap = queries.getTagsForEntries(db, entryIds);
+      return c.json(entries.map(e => ({ ...e, tags: tagMap.get(e.id) ?? [] })));
+    }
+
+    // Resolve category to tag slugs
+    let tagSlugs: string[] | undefined;
+    if (params.data.category) {
+      const cat = CATEGORY_MAP.get(params.data.category);
+      if (!cat) return c.json({ error: `Unknown category: ${params.data.category}` }, 400);
+      tagSlugs = [...cat.tagSlugs];
+    }
+
     let entries;
-    if (params.data.filter === 'preferences') {
-      entries = queries.getVisibleEntries(db, {
-        limit: params.data.limit,
-        offset: params.data.offset,
+    if (params.data.filter === 'all') {
+      // "Everything" view — unfiltered chronological
+      entries = queries.getEntries(db, {
+        limit,
+        offset,
+        ...(params.data.tag != null ? { tag: params.data.tag } : {}),
+        ...(tagSlugs != null ? { tagSlugs } : {}),
         unreadOnly: params.data.unread === 'true',
       });
     } else {
-      entries = queries.getEntries(db, {
-        limit: params.data.limit,
-        offset: params.data.offset,
-        tag: params.data.tag,
+      // Default: filtered feed (Your Feed)
+      // Pass showNoise from config — stored per-user in the config table
+      const showNoiseVal = queries.getConfig(db, 'show_noise');
+      entries = queries.getVisibleEntries(db, {
+        limit,
+        offset,
         unreadOnly: params.data.unread === 'true',
+        showNoise: showNoiseVal === '1',
       });
     }
 
@@ -99,6 +150,28 @@ export const createApiRoutes = (db: Database, config: AppConfig): Hono => {
     if (!body.success) return c.json({ error: body.error.message }, 400);
 
     queries.markEntryStarred(db, id, body.data.starred);
+
+    // Star is now just a bookmark — no preference vector update
+    return c.json({ ok: true });
+  });
+
+  const thumbSchema = z.object({
+    thumb: z.union([z.literal(1), z.literal(-1), z.null()]),
+  });
+
+  api.post('/entries/:id/thumb', async (c) => {
+    const id = Number(c.req.param('id')) as EntryId;
+    const body = thumbSchema.safeParse(await c.req.json());
+    if (!body.success) return c.json({ error: body.error.message }, 400);
+
+    queries.setEntryThumb(db, id, body.data.thumb);
+
+    // Recompute preference vector on thumb change
+    const hasPreference = updatePreferenceVector(db);
+    if (hasPreference) {
+      rescoreAllEntries(db);
+    }
+
     return c.json({ ok: true });
   });
 
@@ -190,8 +263,10 @@ ${outlines}
 
   api.get('/tags', (c) => {
     const tags = queries.getAllTagsWithPreferences(db);
+    // Exclude signal tags — replaced by depth_score
+    const topicTags = tags.filter(t => t.tag_group !== 'signal');
     const grouped: Record<string, Array<Tag & { mode: string }>> = {};
-    for (const tag of tags) {
+    for (const tag of topicTags) {
       const group = tag.tag_group || 'other';
       if (!grouped[group]) grouped[group] = [];
       grouped[group].push(tag);
@@ -242,15 +317,56 @@ ${outlines}
     return c.json({ ok: true, tag_id: id, mode: body.data.mode });
   });
 
+  // --- Categories ---
+
+  api.get('/categories', (c) => {
+    // Return categories with entry counts
+    const result = CATEGORIES.map(cat => {
+      const placeholders = cat.tagSlugs.map(() => '?').join(', ');
+      const row = db.query<{ count: number }, unknown[]>(
+        `SELECT COUNT(DISTINCT e.id) as count
+         FROM entries e
+         JOIN entry_tags et ON e.id = et.entry_id
+         JOIN tags t ON et.tag_id = t.id
+         WHERE t.slug IN (${placeholders})`,
+      ).get(...cat.tagSlugs) ?? { count: 0 };
+      return {
+        slug: cat.slug,
+        label: cat.label,
+        entryCount: row.count,
+      };
+    });
+    return c.json(result);
+  });
+
+  // --- Dashboard ---
+
+  api.get('/dashboard', async (c) => {
+    const feeds = queries.getDashboardFeedStats(db);
+    const indexing = queries.getIndexingStats(db);
+    const queue = getQueueStats(db);
+
+    const embConfig: EmbeddingConfig = { baseUrl: config.embeddingsUrl };
+    const embeddings_healthy = await healthCheck(embConfig);
+
+    return c.json({
+      feeds,
+      indexing: { ...indexing, embeddings_healthy },
+      queue,
+    });
+  });
+
   // --- Onboarding Config ---
 
   api.get('/config/onboarding', (c) => {
     const val = queries.getConfig(db, 'onboarding_complete');
-    return c.json({ complete: val === '1' });
+    const showNoise = queries.getConfig(db, 'show_noise');
+    return c.json({ complete: val === '1', show_noise: showNoise === '1' });
   });
 
   const onboardingSchema = z.object({
     preferences: z.record(z.string(), z.enum(['whitelist', 'blacklist', 'none'])),
+    show_noise: z.boolean().optional(),
   });
 
   api.post('/config/onboarding', async (c) => {
@@ -261,8 +377,18 @@ ${outlines}
       const tagId = Number(tagIdStr) as TagId;
       queries.setTagPreference(db, tagId, mode);
     }
+    if (body.data.show_noise !== undefined) {
+      queries.setConfig(db, 'show_noise', body.data.show_noise ? '1' : '0');
+    }
     queries.setConfig(db, 'onboarding_complete', '1');
     return c.json({ ok: true });
+  });
+
+  // --- Re-tag ---
+
+  api.post('/retag', (c) => {
+    const count = retagAllEntries(db);
+    return c.json({ ok: true, retagged: count });
   });
 
   return api;

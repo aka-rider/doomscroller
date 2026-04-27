@@ -33,8 +33,7 @@ export const createTestDb = (): Database => {
 export const TEST_CONFIG: AppConfig = {
   port: 0,
   dataDir: '/tmp/doomscroller-test',
-  llmBaseUrl: 'http://localhost:11434',
-  llmModel: 'test-model',
+  embeddingsUrl: 'http://localhost:8081',
   fetchIntervalMin: 30,
 };
 

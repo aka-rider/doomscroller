@@ -229,12 +229,9 @@ describe('API Routes', () => {
       expect(res.status).toBe(200);
       const data = await res.json() as Record<string, any[]>;
 
-      expect(data.news).toHaveLength(6);
-      expect(data.tech).toHaveLength(10);
-      expect(data.science).toHaveLength(2);
-      expect(data.sports).toHaveLength(1);
-      expect(data.culture).toHaveLength(7);
-      expect(data.meta).toHaveLength(6);
+      // Signal tags have been replaced by depth_score \u2014 303 topic tags, 0 signal
+      expect(data.topic).toHaveLength(303);
+      expect(data.signal).toBeUndefined();
     });
 
     test('returns empty object when no tags', async () => {
@@ -319,9 +316,9 @@ describe('API Routes', () => {
     });
   });
 
-  // --- Entries with filter=preferences ---
+  // --- Entries with filtering (default = filtered feed) ---
 
-  describe('GET /entries?filter=preferences', () => {
+  describe('GET /entries (default filtered feed)', () => {
     test('filters entries using visibility rules', async () => {
       const feedId = insertTestFeed(db);
       const e1 = insertTestEntry(db, feedId, { title: 'Visible', tagged_at: 12345 });
@@ -335,7 +332,7 @@ describe('API Routes', () => {
       queries.addEntryTag(db, e2, badTag, 'llm');
       queries.setTagPreference(db, badTag, 'blacklist');
 
-      const res = await req('GET', '/entries?filter=preferences');
+      const res = await req('GET', '/entries');
       expect(res.status).toBe(200);
       const data = await res.json() as any[];
 
@@ -345,14 +342,14 @@ describe('API Routes', () => {
       expect(titles).not.toContain('Hidden');
     });
 
-    test('returns all entries without filter param', async () => {
+    test('returns all entries with filter=all', async () => {
       const feedId = insertTestFeed(db);
       const e1 = insertTestEntry(db, feedId, { title: 'A', tagged_at: 12345 });
       const badTag = queries.createTag(db, 'bad', 'Bad', '', false);
       queries.addEntryTag(db, e1, badTag, 'llm');
       queries.setTagPreference(db, badTag, 'blacklist');
 
-      const res = await req('GET', '/entries');
+      const res = await req('GET', '/entries?filter=all');
       const data = await res.json() as any[];
       expect(data.map((e: any) => e.title)).toContain('A');
     });
