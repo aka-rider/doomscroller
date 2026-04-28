@@ -1,8 +1,8 @@
 import { createResource, For, Suspense } from 'solid-js';
 import { api } from '../lib/api';
-import type { CategoryInfo } from '../lib/api';
+import type { CategoryInfo, ViewMode } from '../lib/types';
 
-export type ViewMode = 'feed' | 'everything' | 'favorites' | 'trash' | 'noise';
+export type { ViewMode };
 
 interface TagSidebarProps {
   activeCategory: string | null;
@@ -19,7 +19,8 @@ export const TagSidebar = (props: TagSidebarProps) => {
       <div class="tag-sidebar-inner">
         {/* Your Feed — filtered */}
         <button
-          class={`tag-sidebar-item ${props.activeView === 'feed' && props.activeCategory === null ? 'is-active' : ''}`}
+          class="tag-sidebar-item"
+          classList={{ 'is-active': props.activeView === 'feed' && props.activeCategory === null }}
           onClick={() => {
             props.onSelectView('feed');
             props.onSelectCategory(null);
@@ -30,7 +31,8 @@ export const TagSidebar = (props: TagSidebarProps) => {
 
         {/* Favorites */}
         <button
-          class={`tag-sidebar-item ${props.activeView === 'favorites' ? 'is-active' : ''}`}
+          class="tag-sidebar-item"
+          classList={{ 'is-active': props.activeView === 'favorites' }}
           onClick={() => props.onSelectView('favorites')}
         >
           <span class="tag-sidebar-label">{'\u2605'} Favorites</span>
@@ -40,7 +42,8 @@ export const TagSidebar = (props: TagSidebarProps) => {
           <For each={(categories() ?? []).filter(c => c.entryCount > 0)}>
             {(cat: CategoryInfo) => (
               <button
-                class={`tag-sidebar-item ${props.activeView === 'feed' && props.activeCategory === cat.slug ? 'is-active' : ''}`}
+                class="tag-sidebar-item"
+                classList={{ 'is-active': props.activeView === 'feed' && props.activeCategory === cat.slug }}
                 onClick={() => {
                   props.onSelectView('feed');
                   props.onSelectCategory(cat.slug);
@@ -58,7 +61,8 @@ export const TagSidebar = (props: TagSidebarProps) => {
 
         {/* Everything — unfiltered */}
         <button
-          class={`tag-sidebar-item ${props.activeView === 'everything' ? 'is-active' : ''}`}
+          class="tag-sidebar-item"
+          classList={{ 'is-active': props.activeView === 'everything' }}
           onClick={() => props.onSelectView('everything')}
         >
           <span class="tag-sidebar-label">Everything</span>
@@ -66,7 +70,8 @@ export const TagSidebar = (props: TagSidebarProps) => {
 
         {/* Trash — dismissed */}
         <button
-          class={`tag-sidebar-item ${props.activeView === 'trash' ? 'is-active' : ''}`}
+          class="tag-sidebar-item"
+          classList={{ 'is-active': props.activeView === 'trash' }}
           onClick={() => props.onSelectView('trash')}
         >
           <span class="tag-sidebar-label">Trash</span>
@@ -74,7 +79,8 @@ export const TagSidebar = (props: TagSidebarProps) => {
 
         {/* Noise — auto-filtered low-quality */}
         <button
-          class={`tag-sidebar-item ${props.activeView === 'noise' ? 'is-active' : ''}`}
+          class="tag-sidebar-item"
+          classList={{ 'is-active': props.activeView === 'noise' }}
           onClick={() => props.onSelectView('noise')}
         >
           <span class="tag-sidebar-label">Noise</span>

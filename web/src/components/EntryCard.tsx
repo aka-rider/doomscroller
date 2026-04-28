@@ -49,7 +49,8 @@ export const EntryCard = (props: EntryCardProps) => {
   if (isNoise() && !isFiltered()) {
     return (
       <article
-        class={`entry-card entry-card--noise ${isRead() ? 'is-read' : ''}`}
+        class="entry-card entry-card--noise"
+        classList={{ 'is-read': isRead() }}
         onClick={handleClick}
       >
         <div class="entry-card-noise-inner">
@@ -83,7 +84,8 @@ export const EntryCard = (props: EntryCardProps) => {
   // --- Standard card ---
   return (
     <article
-      class={`entry-card ${isRead() ? 'is-read' : ''} ${isFiltered() ? 'is-filtered' : ''}`}
+      class="entry-card"
+      classList={{ 'is-read': isRead(), 'is-filtered': isFiltered() }}
       onClick={handleClick}
     >
       <div class="entry-card-inner">
@@ -150,7 +152,8 @@ export const EntryCard = (props: EntryCardProps) => {
                   props.onThumb(props.entry.id, thumbValue() === 1 ? null : 1);
                 }
               }}
-              class={`entry-card-thumb ${thumbValue() === 1 ? 'is-active-up' : ''}`}
+              class="entry-card-thumb"
+              classList={{ 'is-active-up': thumbValue() === 1 }}
               title="Thumb up (u)"
             >
               {'\u{1F44D}'}
@@ -162,7 +165,8 @@ export const EntryCard = (props: EntryCardProps) => {
                   props.onThumb(props.entry.id, thumbValue() === -1 ? null : -1);
                 }
               }}
-              class={`entry-card-thumb ${thumbValue() === -1 ? 'is-active-down' : ''}`}
+              class="entry-card-thumb"
+              classList={{ 'is-active-down': thumbValue() === -1 }}
               title="Thumb down (d)"
             >
               {'\u{1F44E}'}

@@ -1,6 +1,6 @@
 import { createSignal, createResource, For, Show, Suspense } from 'solid-js';
 import { api } from '../lib/api';
-import type { Tag, Settings } from '../lib/api';
+import type { Tag } from '../lib/api';
 import { timeAgo } from '../lib/api';
 import { TagPreferenceGrid } from './TagPreferenceGrid';
 

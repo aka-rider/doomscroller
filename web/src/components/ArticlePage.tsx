@@ -1,4 +1,4 @@
-import { Show, createSignal, createEffect } from 'solid-js';
+import { Show, For, createSignal, createEffect } from 'solid-js';
 import type { EntryWithMeta } from '../lib/api';
 import { api, timeAgo, contentLabel, readTime } from '../lib/api';
 import { TagPill } from './TagPill';
@@ -71,7 +71,8 @@ export const ArticlePage = (props: ArticlePageProps) => {
             onClick={() => {
               if (props.onThumb) props.onThumb(props.entry.id, thumbValue() === 1 ? null : 1);
             }}
-            class={`entry-card-thumb ${thumbValue() === 1 ? 'is-active-up' : ''}`}
+            class="entry-card-thumb"
+            classList={{ 'is-active-up': thumbValue() === 1 }}
             title="Thumb up (u)"
           >
             {'\u{1F44D}'}
@@ -80,7 +81,8 @@ export const ArticlePage = (props: ArticlePageProps) => {
             onClick={() => {
               if (props.onThumb) props.onThumb(props.entry.id, thumbValue() === -1 ? null : -1);
             }}
-            class={`entry-card-thumb ${thumbValue() === -1 ? 'is-active-down' : ''}`}
+            class="entry-card-thumb"
+            classList={{ 'is-active-down': thumbValue() === -1 }}
             title="Thumb down (d)"
           >
             {'\u{1F44E}'}
@@ -159,16 +161,18 @@ export const ArticlePage = (props: ArticlePageProps) => {
             {depthLbl()}
           </span>
         </Show>
-        {entryTags().map(tag => (
-          <TagPill
-            slug={tag.slug}
-            label={tag.label}
-            tagId={tag.tag_id}
-            mode={tag.mode as 'none' | 'whitelist' | 'blacklist'}
-            onClick={() => { }}
-            onCyclePreference={props.onCycleTagPreference ?? (() => { })}
-          />
-        ))}
+        <For each={entryTags()}>
+          {(tag) => (
+            <TagPill
+              slug={tag.slug}
+              label={tag.label}
+              tagId={tag.tag_id}
+              mode={tag.mode as 'none' | 'whitelist' | 'blacklist'}
+              onClick={() => { }}
+              onCyclePreference={props.onCycleTagPreference ?? (() => { })}
+            />
+          )}
+        </For>
       </div>
 
       {/* Open original — bottom */}

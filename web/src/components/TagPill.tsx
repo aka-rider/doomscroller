@@ -40,7 +40,8 @@ export const TagPill = (props: TagPillProps) => {
 
   return (
     <button
-      class={`tag-pill ${modeClass()}`}
+      class="tag-pill"
+      classList={{ [modeClass()]: !!modeClass() }}
       onClick={handleClick}
     >
       {MODE_PREFIX[props.mode] ?? ''}{props.label}

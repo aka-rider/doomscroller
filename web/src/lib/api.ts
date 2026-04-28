@@ -1,111 +1,9 @@
 // Typed API client for the Doomscroller backend.
 // No axios. No abstractions. Just fetch with types.
 
+import type { EntryWithMeta, EntryContent, Feed, Stats, Tag, CategoryInfo, OnboardingStatus, Settings, DashboardData } from './types';
+
 const BASE = '/api';
-
-interface EntryTag {
-  tag_id: number;
-  slug: string;
-  label: string;
-  mode: string;
-}
-
-interface EntryWithMeta {
-  id: number;
-  feed_id: number;
-  guid: string;
-  url: string;
-  title: string;
-  author: string;
-  content_html: string;
-  summary: string;
-  image_url: string | null;
-  published_at: number | null;
-  fetched_at: number;
-  is_read: number;
-  is_starred: number;
-  tagged_at: number | null;
-  thumb: number | null;  // 1=up, -1=down, null=none
-  depth_score: number | null;  // 0.0=noise → 1.0=dense academic
-  extractive_summary: string | null;  // TextRank: key sentences
-  word_count: number | null;          // article word count
-  feed_title: string;
-  feed_site_url: string;
-  tags: EntryTag[];
-}
-
-interface Feed {
-  id: number;
-  url: string;
-  title: string;
-  site_url: string;
-  description: string;
-  error_count: number;
-  last_error: string | null;
-  last_fetched_at: number | null;
-  is_active: number;
-  entry_count: number;
-  unread_count: number;
-}
-
-interface Stats {
-  total_feeds: number;
-  total_entries: number;
-  unread_entries: number;
-  tagged_entries: number;
-  pending_jobs: number;
-}
-
-interface DashboardFeed extends Feed {
-  tagged_count: number;
-}
-
-interface DashboardIndexing {
-  pending_entries: number;
-  running_jobs: number;
-  completed_last_hour: number;
-  avg_batch_duration_sec: number | null;
-  entries_per_minute: number | null;
-  embeddings_healthy: boolean;
-}
-
-interface DashboardData {
-  feeds: DashboardFeed[];
-  indexing: DashboardIndexing;
-  queue: Record<string, number>;
-}
-
-interface Tag {
-  id: number;
-  slug: string;
-  label: string;
-  tag_group: string;
-  is_builtin: number;
-  use_count: number;
-  sort_order: number;
-  mode: string;
-}
-
-interface CategoryInfo {
-  slug: string;
-  label: string;
-  entryCount: number;
-}
-
-interface OnboardingStatus {
-  complete: boolean;
-  show_noise: boolean;
-}
-
-interface EntryContent {
-  content_full: string | null;
-  cached: boolean;
-  error?: string;
-}
-
-interface Settings {
-  reader_cache_days: number;
-}
 
 // --- Fetcher ---
 
@@ -143,23 +41,34 @@ const put = async <T>(path: string, body?: unknown): Promise<T> => {
   return res.json() as Promise<T>;
 };
 
+// Build query string from an object, skipping null/undefined/false values.
+const toQueryString = (opts: Record<string, string | number | boolean | null | undefined>): string => {
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(opts)) {
+    if (v == null || v === false) continue;
+    params.set(k, v === true ? 'true' : String(v));
+  }
+  const qs = params.toString();
+  return qs ? `?${qs}` : '';
+};
+
 // --- API ---
 
 export const api = {
   entries: {
     list: (opts?: { limit?: number; offset?: number; tag?: string; category?: string; unread?: boolean; filter?: string; starred?: boolean; thumb?: number; noise?: boolean }) => {
-      const params = new URLSearchParams();
-      if (opts?.limit) params.set('limit', String(opts.limit));
-      if (opts?.offset) params.set('offset', String(opts.offset));
-      if (opts?.tag) params.set('tag', opts.tag);
-      if (opts?.category) params.set('category', opts.category);
-      if (opts?.unread) params.set('unread', 'true');
-      if (opts?.filter) params.set('filter', opts.filter);
-      if (opts?.starred) params.set('starred', 'true');
-      if (opts?.thumb != null) params.set('thumb', String(opts.thumb));
-      if (opts?.noise) params.set('noise', 'true');
-      const qs = params.toString();
-      return get<EntryWithMeta[]>(`/entries${qs ? `?${qs}` : ''}`);
+      const qs = toQueryString({
+        limit: opts?.limit,
+        offset: opts?.offset,
+        tag: opts?.tag,
+        category: opts?.category,
+        unread: opts?.unread,
+        filter: opts?.filter,
+        starred: opts?.starred,
+        thumb: opts?.thumb,
+        noise: opts?.noise,
+      });
+      return get<EntryWithMeta[]>(`/entries${qs}`);
     },
     get: (id: number) => get<EntryWithMeta>(`/entries/${id}`),
     getContent: (id: number) => get<EntryContent>(`/entries/${id}/content`),
@@ -187,16 +96,7 @@ export const api = {
     },
     create: (slug: string, label: string) => post<Tag>('/tags', { slug, label, tag_group: 'custom' }),
     delete: (id: number) => del<{ ok: boolean }>(`/tags/${id}`),
-    setPreference: (id: number, mode: string) => {
-      return fetch(`${BASE}/tags/${id}/preference`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode }),
-      }).then(r => {
-        if (!r.ok) throw new Error(`PUT /tags/${id}/preference: ${r.status}`);
-        return r.json();
-      });
-    },
+    setPreference: (id: number, mode: string) => put<{ ok: boolean }>(`/tags/${id}/preference`, { mode }),
   },
 
   config: {
@@ -236,4 +136,4 @@ export const readTime = (wordCount: number | null): string => {
   return `${minutes} min read`;
 };
 
-export type { EntryWithMeta, EntryTag, EntryContent, Feed, Stats, Tag, CategoryInfo, OnboardingStatus, Settings, DashboardData, DashboardFeed, DashboardIndexing };
+export type { EntryWithMeta, EntryTag, EntryContent, Feed, Stats, Tag, CategoryInfo, OnboardingStatus, Settings, DashboardData, DashboardFeed, DashboardIndexing } from './types';
