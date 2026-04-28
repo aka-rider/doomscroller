@@ -1,10 +1,11 @@
 import { createSignal, createResource, createEffect, onCleanup, For, Show, Suspense, ErrorBoundary } from 'solid-js';
 import { api } from './lib/api';
+import type { EntryWithMeta, Tag } from './lib/api';
 import { AppShell } from './components/AppShell';
 import { EntryCard } from './components/EntryCard';
+import { ArticlePage } from './components/ArticlePage';
 import { SettingsPanel } from './components/SettingsPanel';
 import { Onboarding } from './components/Onboarding';
-import type { Tag } from './lib/api';
 import type { ViewMode } from './components/TagSidebar';
 
 export const App = () => {
@@ -45,10 +46,54 @@ export const App = () => {
   const [activeCategory, setActiveCategory] = createSignal<string | null>(null);
   const [activeView, setActiveView] = createSignal<ViewMode>('feed');
   const [sidebarOpen, setSidebarOpen] = createSignal(false);
-  const [expandedEntryId, setExpandedEntryId] = createSignal<number | null>(null);
+  const [activeArticle, setActiveArticle] = createSignal<EntryWithMeta | null>(null);
 
-  const toggleExpand = (id: number) => {
-    setExpandedEntryId(prev => prev === id ? null : id);
+  // Keep activeArticle in sync when entries mutate (star, thumb, tag prefs)
+  const syncActiveArticle = (updatedList: EntryWithMeta[]) => {
+    const current = activeArticle();
+    if (current) {
+      const updated = updatedList.find(e => e.id === current.id);
+      if (updated) setActiveArticle(updated);
+    }
+  };
+
+  const openArticle = (entry: EntryWithMeta) => {
+    if (!entry.is_read) handleMarkRead(entry.id);
+    setActiveArticle(entry);
+  };
+
+  const closeArticle = () => {
+    setActiveArticle(null);
+  };
+
+  const navigateArticle = (direction: 'prev' | 'next') => {
+    const list = entries() ?? [];
+    const current = activeArticle();
+    if (!current) return;
+    const idx = list.findIndex(e => e.id === current.id);
+    if (idx === -1) return;
+    const target = direction === 'prev' ? list[idx - 1] : list[idx + 1];
+    if (target) {
+      if (!target.is_read) handleMarkRead(target.id);
+      setActiveArticle(target);
+    }
+  };
+
+  // Derived: previous/next entries relative to the active article
+  const prevEntry = () => {
+    const article = activeArticle();
+    if (!article) return null;
+    const list = entries() ?? [];
+    const idx = list.findIndex(e => e.id === article.id);
+    return idx > 0 ? list[idx - 1] ?? null : null;
+  };
+
+  const nextEntry = () => {
+    const article = activeArticle();
+    if (!article) return null;
+    const list = entries() ?? [];
+    const idx = list.findIndex(e => e.id === article.id);
+    return idx >= 0 && idx < list.length - 1 ? list[idx + 1] ?? null : null;
   };
 
   // Resource fetcher adapts based on active view
@@ -95,11 +140,14 @@ export const App = () => {
 
   const handleStar = async (id: number, starred: boolean) => {
     const prev = entries() ?? [];
-    mutateEntries(prev.map(e => e.id === id ? { ...e, is_starred: starred ? 1 : 0 } : e));
+    const updated = prev.map(e => e.id === id ? { ...e, is_starred: starred ? 1 : 0 } : e);
+    mutateEntries(updated);
+    syncActiveArticle(updated);
     try {
       await api.entries.star(id, starred);
     } catch {
       mutateEntries(prev);
+      syncActiveArticle(prev);
     }
   };
 
@@ -109,12 +157,15 @@ export const App = () => {
       // Thumb down: remove from list immediately (optimistic)
       mutateEntries(prev.filter(e => e.id !== id));
     } else {
-      mutateEntries(prev.map(e => e.id === id ? { ...e, thumb } : e));
+      const updated = prev.map(e => e.id === id ? { ...e, thumb } : e);
+      mutateEntries(updated);
+      syncActiveArticle(updated);
     }
     try {
       await api.entries.thumb(id, thumb);
     } catch {
       mutateEntries(prev);
+      syncActiveArticle(prev);
     }
   };
 
@@ -176,6 +227,52 @@ export const App = () => {
     }
 
     const list = entries() ?? [];
+    const article = activeArticle();
+
+    // --- Article page shortcuts ---
+    if (article) {
+      const articleIdx = list.findIndex(e => e.id === article.id);
+      switch (e.key) {
+        case 'Escape': {
+          e.preventDefault();
+          closeArticle();
+          return;
+        }
+        case 'j': {
+          e.preventDefault();
+          if (articleIdx >= 0 && articleIdx < list.length - 1) navigateArticle('next');
+          return;
+        }
+        case 'k': {
+          e.preventDefault();
+          if (articleIdx > 0) navigateArticle('prev');
+          return;
+        }
+        case 'o': {
+          e.preventDefault();
+          window.open(article.url, '_blank', 'noopener,noreferrer');
+          return;
+        }
+        case 's': {
+          e.preventDefault();
+          handleStar(article.id, !article.is_starred);
+          return;
+        }
+        case 'u': {
+          e.preventDefault();
+          handleThumb(article.id, article.thumb === 1 ? null : 1);
+          return;
+        }
+        case 'd': {
+          e.preventDefault();
+          handleThumb(article.id, article.thumb === -1 ? null : -1);
+          return;
+        }
+      }
+      return;
+    }
+
+    // --- Feed list shortcuts ---
     const idx = focusIndex();
 
     switch (e.key) {
@@ -204,10 +301,13 @@ export const App = () => {
       }
       case 'Enter':
       case 'e': {
+        if (activeArticle()) {
+          break; // Don't handle when on article page
+        }
         if (idx >= 0 && idx < list.length) {
           e.preventDefault();
           const entry = list[idx]!;
-          toggleExpand(entry.id);
+          openArticle(entry);
         }
         break;
       }
@@ -241,8 +341,8 @@ export const App = () => {
         break;
       }
       case 'Escape': {
-        if (expandedEntryId() !== null) {
-          setExpandedEntryId(null);
+        if (activeArticle() !== null) {
+          closeArticle();
         } else if (sidebarOpen()) {
           setSidebarOpen(false);
         } else {
@@ -274,64 +374,81 @@ export const App = () => {
 
       {/* Main app — hidden until onboarding resolved */}
       <Show when={onboardingDone() === true}>
-        <AppShell
-          showUnreadOnly={showUnreadOnly()}
-          onToggleUnread={() => setShowUnreadOnly(!showUnreadOnly())}
-          onOpenSettings={() => setShowSettings(true)}
-          activeCategory={activeCategory()}
-          onSelectCategory={handleSelectCategory}
-          activeView={activeView()}
-          onSelectView={handleSelectView}
-          sidebarOpen={sidebarOpen()}
-          onToggleSidebar={() => setSidebarOpen(!sidebarOpen())}
-        >
-          <ErrorBoundary fallback={(err) => (
-            <div style={{ padding: "var(--space-8)", "text-align": "center" }}>
-              <p class="meta" style={{ color: "var(--danger)" }}>Failed to load entries</p>
-              <p class="meta">{String(err)}</p>
-            </div>
-          )}>
-            <Suspense fallback={
+        {/* Article page — replaces the feed when an article is open */}
+        <Show when={activeArticle()} fallback={
+          <AppShell
+            showUnreadOnly={showUnreadOnly()}
+            onToggleUnread={() => setShowUnreadOnly(!showUnreadOnly())}
+            onOpenSettings={() => setShowSettings(true)}
+            activeCategory={activeCategory()}
+            onSelectCategory={handleSelectCategory}
+            activeView={activeView()}
+            onSelectView={handleSelectView}
+            sidebarOpen={sidebarOpen()}
+            onToggleSidebar={() => setSidebarOpen(!sidebarOpen())}
+            onCloseSidebar={() => setSidebarOpen(false)}
+          >
+            <ErrorBoundary fallback={(err) => (
               <div style={{ padding: "var(--space-8)", "text-align": "center" }}>
-                <p class="meta">Loading...</p>
+                <p class="meta" style={{ color: "var(--danger)" }}>Failed to load entries</p>
+                <p class="meta">{String(err)}</p>
               </div>
-            }>
-              <Show
-                when={(entries()?.length ?? 0) > 0}
-                fallback={
-                  <div style={{ padding: "var(--space-16)", "text-align": "center" }}>
-                    <p style={{
-                      "font-family": "var(--font-serif)",
-                      "font-size": "var(--text-2xl)",
-                      color: "var(--text-tertiary)",
-                      "margin-bottom": "var(--space-4)",
-                    }}>
-                      Nothing here yet
-                    </p>
-                    <p class="meta">
-                      Add some feeds to get started.
-                    </p>
-                  </div>
-                }
-              >
-                <For each={entries()}>
-                  {(entry) => (
-                    <EntryCard
-                      entry={entry}
-                      expanded={expandedEntryId() === entry.id}
-                      onToggleExpand={toggleExpand}
-                      onMarkRead={handleMarkRead}
-                      onStar={handleStar}
-                      onTagClick={handleTagClick}
-                      onThumb={handleThumb}
-                      onCycleTagPreference={handleCycleTagPreference}
-                    />
-                  )}
-                </For>
-              </Show>
-            </Suspense>
-          </ErrorBoundary>
-        </AppShell>
+            )}>
+              <Suspense fallback={
+                <div style={{ padding: "var(--space-8)", "text-align": "center" }}>
+                  <p class="meta">Loading...</p>
+                </div>
+              }>
+                <Show
+                  when={(entries()?.length ?? 0) > 0}
+                  fallback={
+                    <div style={{ padding: "var(--space-16)", "text-align": "center" }}>
+                      <p style={{
+                        "font-family": "var(--font-serif)",
+                        "font-size": "var(--text-2xl)",
+                        color: "var(--text-tertiary)",
+                        "margin-bottom": "var(--space-4)",
+                      }}>
+                        Nothing here yet
+                      </p>
+                      <p class="meta">
+                        Add some feeds to get started.
+                      </p>
+                    </div>
+                  }
+                >
+                  <For each={entries()}>
+                    {(entry) => (
+                      <EntryCard
+                        entry={entry}
+                        onOpenArticle={openArticle}
+                        onMarkRead={handleMarkRead}
+                        onStar={handleStar}
+                        onTagClick={handleTagClick}
+                        onThumb={handleThumb}
+                        onCycleTagPreference={handleCycleTagPreference}
+                      />
+                    )}
+                  </For>
+                </Show>
+              </Suspense>
+            </ErrorBoundary>
+          </AppShell>
+        }>
+          {(article) => (
+            <ArticlePage
+              entry={article()}
+              onBack={closeArticle}
+              prevTitle={prevEntry()?.title ?? null}
+              nextTitle={nextEntry()?.title ?? null}
+              onPrev={() => navigateArticle('prev')}
+              onNext={() => navigateArticle('next')}
+              onStar={handleStar}
+              onThumb={handleThumb}
+              onCycleTagPreference={handleCycleTagPreference}
+            />
+          )}
+        </Show>
 
         {/* Settings panel */}
         <Show when={showSettings()}>

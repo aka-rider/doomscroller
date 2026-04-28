@@ -255,12 +255,35 @@ function Card(props: { title: string; class?: string }) {
 effects won't execute on the server. Design accordingly. For this project
 we're SPA-only so this is informational.
 
-## 8. `onMount` vs `createEffect`
+## 8. `onMount` vs `createEffect` — Components Are Not Re-Created
 
 - `onMount`: runs once after first render. Use for "component did mount" logic.
 - `createEffect`: runs after first render AND re-runs when tracked dependencies change.
 
 Don't use `createEffect` when you mean `onMount`. The extra re-runs are bugs waiting to happen.
+
+**But the inverse is worse:** SolidJS reuses component instances — when props change,
+the component function does NOT re-run. `onMount` will NOT fire again. If your setup
+logic depends on a prop value, you MUST use `createEffect`.
+
+```tsx
+// BROKEN — navigating prev/next changes props.entry, but onMount never re-fires.
+// Content stays stale, page doesn't scroll to top.
+onMount(() => {
+  window.scrollTo(0, 0);
+  fetchContent(props.entry.id); // runs once, forever shows the first article
+});
+
+// CORRECT — createEffect tracks props.entry.id and re-runs on change.
+createEffect(() => {
+  const id = props.entry.id; // tracked dependency
+  window.scrollTo(0, 0);
+  fetchContent(id); // re-fetches when entry changes
+});
+```
+
+**Rule of thumb:** If the code depends only on "this component exists" → `onMount`.
+If it depends on a prop or signal value → `createEffect`.
 
 ## 9. `batch()` for Multiple Signal Updates
 
@@ -351,8 +374,8 @@ if the computation is expensive and you need to cache the result.
 - CSP headers on the web UI
 - Fever API uses API key auth (generated on first boot, stored in SQLite)
 
-
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
+
 ## Beads Issue Tracker
 
 This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
@@ -393,6 +416,7 @@ bd close <id>         # Complete work
 7. **Hand off** - Provide context for next session
 
 **CRITICAL RULES:**
+
 - Work is NOT complete until `git push` succeeds
 - NEVER stop before pushing - that leaves work stranded locally
 - NEVER say "ready to push when you are" - YOU must push

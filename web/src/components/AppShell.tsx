@@ -15,6 +15,7 @@ interface AppShellProps {
   onSelectView: (view: ViewMode) => void;
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
+  onCloseSidebar: () => void;
 }
 
 export const AppShell = (props: AppShellProps) => {
@@ -43,19 +44,19 @@ export const AppShell = (props: AppShellProps) => {
         <Show when={props.sidebarOpen}>
           <div
             class="mobile-drawer-overlay"
-            onClick={props.onToggleSidebar}
+            onClick={props.onCloseSidebar}
           />
           <div class="mobile-drawer">
             <TagSidebar
               activeCategory={props.activeCategory}
               onSelectCategory={(slug) => {
                 props.onSelectCategory(slug);
-                props.onToggleSidebar();
+                props.onCloseSidebar();
               }}
               activeView={props.activeView}
               onSelectView={(view) => {
                 props.onSelectView(view);
-                props.onToggleSidebar();
+                props.onCloseSidebar();
               }}
             />
           </div>

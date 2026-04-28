@@ -1,12 +1,11 @@
-import { Show, For, createSignal } from 'solid-js';
+import { Show, For } from 'solid-js';
 import type { EntryWithMeta } from '../lib/api';
-import { api, timeAgo, contentLabel, readTime } from '../lib/api';
+import { timeAgo, contentLabel, readTime } from '../lib/api';
 import { TagPill } from './TagPill';
 
 interface EntryCardProps {
   entry: EntryWithMeta;
-  expanded: boolean;
-  onToggleExpand: (id: number) => void;
+  onOpenArticle: (entry: EntryWithMeta) => void;
   onMarkRead: (id: number) => void;
   onStar: (id: number, starred: boolean) => void;
   onTagClick: (slug: string) => void;
@@ -14,18 +13,6 @@ interface EntryCardProps {
   onCycleTagPreference?: (tagId: number, newMode: 'none' | 'whitelist' | 'blacklist') => void;
 }
 
-// Client-side HTML sanitization — defense-in-depth (server also sanitizes)
-const sanitizeHtml = (html: string): string => {
-  let clean = html
-    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
-    .replace(/<iframe\b[^>]*>.*?<\/iframe>/gi, '')
-    .replace(/<object\b[^>]*>.*?<\/object>/gi, '')
-    .replace(/<embed\b[^>]*\/?>/gi, '');
-  clean = clean.replace(/\s+on\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '');
-  clean = clean.replace(/\bhref\s*=\s*["']javascript:[^"']*["']/gi, 'href="#"');
-  return clean;
-};
 
 export const EntryCard = (props: EntryCardProps) => {
   const isRead = () => props.entry.is_read === 1;
@@ -44,39 +31,15 @@ export const EntryCard = (props: EntryCardProps) => {
     return tags.every(t => t.mode === 'blacklist');
   };
 
-  // Reader view content (lazy-loaded on first expand)
-  const [readerContent, setReaderContent] = createSignal<string | null>(null);
-  const [readerLoading, setReaderLoading] = createSignal(false);
-  const [readerError, setReaderError] = createSignal('');
-
   const handleClick = () => {
     if (!isRead()) {
       props.onMarkRead(props.entry.id);
     }
   };
 
-  const handleExpand = (e: MouseEvent) => {
+  const handleOpenArticle = (e: MouseEvent) => {
     e.stopPropagation();
-    if (!isRead()) {
-      props.onMarkRead(props.entry.id);
-    }
-    props.onToggleExpand(props.entry.id);
-
-    // Lazy-load reader content on first expand
-    if (!props.expanded && readerContent() === null && !readerLoading()) {
-      setReaderLoading(true);
-      setReaderError('');
-      api.entries.getContent(props.entry.id)
-        .then(data => {
-          setReaderContent(data.content_full ?? props.entry.content_html ?? null);
-          if (data.error) setReaderError(data.error);
-        })
-        .catch(() => {
-          setReaderContent(props.entry.content_html ?? null);
-          setReaderError('Failed to extract article');
-        })
-        .finally(() => setReaderLoading(false));
-    }
+    props.onOpenArticle(props.entry);
   };
 
   // Summary to display: prefer extractive_summary, fall back to RSS summary
@@ -117,10 +80,10 @@ export const EntryCard = (props: EntryCardProps) => {
     );
   }
 
-  // --- Standard card with inline expansion ---
+  // --- Standard card ---
   return (
     <article
-      class={`entry-card ${isRead() ? 'is-read' : ''} ${isFiltered() ? 'is-filtered' : ''} ${props.expanded ? 'is-expanded' : ''}`}
+      class={`entry-card ${isRead() ? 'is-read' : ''} ${isFiltered() ? 'is-filtered' : ''}`}
       onClick={handleClick}
     >
       <div class="entry-card-inner">
@@ -140,69 +103,18 @@ export const EntryCard = (props: EntryCardProps) => {
             </Show>
           </div>
 
-          {/* Title — click to expand */}
+          {/* Title — click to open article page */}
           <button
             class="article-title entry-card-expand-btn"
-            onClick={handleExpand}
-            title={props.expanded ? 'Collapse (e)' : 'Expand (e)'}
+            onClick={handleOpenArticle}
+            title="Read article (e)"
           >
             {props.entry.title}
           </button>
 
-          {/* Summary (collapsed only) */}
-          <Show when={!props.expanded && displaySummary()}>
+          {/* Summary */}
+          <Show when={displaySummary()}>
             <p class="entry-summary">{displaySummary()}</p>
-          </Show>
-
-          {/* Expanded: Reader view */}
-          <Show when={props.expanded}>
-            <div class="reader-view">
-              {/* Open original — top */}
-              <a
-                href={props.entry.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                class="reader-view-link"
-              >
-                Open original ↗
-              </a>
-
-              <Show when={readerLoading()}>
-                <div class="reader-view-loading">
-                  <p class="meta">Loading article...</p>
-                </div>
-              </Show>
-
-              <Show when={readerError() && !readerLoading()}>
-                <p class="meta" style={{ color: "var(--text-tertiary)", "margin-bottom": "var(--space-3)" }}>
-                  Showing RSS content (extraction: {readerError()})
-                </p>
-              </Show>
-
-              <Show when={readerContent() && !readerLoading()}>
-                <div
-                  class="reader-content"
-                  innerHTML={sanitizeHtml(readerContent()!)}
-                />
-              </Show>
-
-              <Show when={!readerContent() && !readerLoading()}>
-                <div
-                  class="reader-content"
-                  innerHTML={sanitizeHtml(props.entry.content_html || '')}
-                />
-              </Show>
-
-              {/* Open original — bottom */}
-              <a
-                href={props.entry.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                class="reader-view-link reader-view-link--bottom"
-              >
-                Open original ↗
-              </a>
-            </div>
           </Show>
 
           {/* Tag pills row */}
@@ -223,7 +135,7 @@ export const EntryCard = (props: EntryCardProps) => {
                   tagId={tag.tag_id}
                   mode={tag.mode as 'none' | 'whitelist' | 'blacklist'}
                   onClick={props.onTagClick}
-                  onCyclePreference={props.onCycleTagPreference}
+                  onCyclePreference={props.onCycleTagPreference ?? (() => { })}
                 />
               )}
             </For>
@@ -271,8 +183,8 @@ export const EntryCard = (props: EntryCardProps) => {
           </div>
         </div>
 
-        {/* Thumbnail (collapsed only) */}
-        <Show when={!props.expanded && props.entry.image_url}>
+        {/* Thumbnail */}
+        <Show when={props.entry.image_url}>
           <img
             src={props.entry.image_url!}
             alt=""
