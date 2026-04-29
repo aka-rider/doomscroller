@@ -140,9 +140,14 @@ export const createApiRoutes = (db: Database, config: AppConfig): Hono => {
     return c.json(entry);
   });
 
-  api.post('/entries/:id/read', (c) => {
+  api.post('/entries/:id/read', async (c) => {
     const id = Number(c.req.param('id')) as EntryId;
-    queries.markEntryRead(db, id);
+    const body = z.object({ is_read: z.boolean().optional() }).safeParse(await c.req.json().catch(() => ({})));
+    if (body.success && body.data.is_read !== undefined) {
+      queries.setEntryRead(db, id, body.data.is_read);
+    } else {
+      queries.markEntryRead(db, id);
+    }
     return c.json({ ok: true });
   });
 
@@ -322,8 +327,14 @@ ${outlines}
   // --- Categories ---
 
   api.get('/categories', (c) => {
-    // Return categories with entry counts
-    const result = CATEGORIES.map(cat => {
+    // Global count of whitelisted tags (to distinguish "no preferences set" from "none in this category")
+    const globalRow = db.query<{ count: number }, []>(
+      `SELECT COUNT(*) as count FROM tag_preferences WHERE mode = 'whitelist'`,
+    ).get() ?? { count: 0 };
+    const globalWhitelistCount = globalRow.count;
+
+    // Return categories with entry counts and whitelist info
+    const categories = CATEGORIES.map(cat => {
       const placeholders = cat.tagSlugs.map(() => '?').join(', ');
       const row = db.query<{ count: number }, unknown[]>(
         `SELECT COUNT(DISTINCT e.id) as count
@@ -332,13 +343,22 @@ ${outlines}
          JOIN tags t ON et.tag_id = t.id
          WHERE t.slug IN (${placeholders})`,
       ).get(...cat.tagSlugs) ?? { count: 0 };
+
+      const wlRow = db.query<{ count: number }, unknown[]>(
+        `SELECT COUNT(*) as count
+         FROM tags t
+         JOIN tag_preferences tp ON t.id = tp.tag_id
+         WHERE t.slug IN (${placeholders}) AND tp.mode = 'whitelist'`,
+      ).get(...cat.tagSlugs) ?? { count: 0 };
+
       return {
         slug: cat.slug,
         label: cat.label,
         entryCount: row.count,
+        whitelistedTagCount: wlRow.count,
       };
     });
-    return c.json(result);
+    return c.json({ categories, globalWhitelistCount });
   });
 
   // --- Dashboard ---

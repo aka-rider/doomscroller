@@ -1,7 +1,7 @@
 // Typed API client for the Doomscroller backend.
 // No axios. No abstractions. Just fetch with types.
 
-import type { EntryWithMeta, EntryContent, Feed, Stats, Tag, CategoryInfo, OnboardingStatus, Settings, DashboardData } from './types';
+import type { EntryWithMeta, EntryContent, Feed, Stats, Tag, CategoriesResponse, OnboardingStatus, Settings, DashboardData } from './types';
 
 const BASE = '/api';
 
@@ -73,11 +73,12 @@ export const api = {
     get: (id: number) => get<EntryWithMeta>(`/entries/${id}`),
     getContent: (id: number) => get<EntryContent>(`/entries/${id}/content`),
     markRead: (id: number) => post<{ ok: boolean }>(`/entries/${id}/read`),
+    setRead: (id: number, isRead: boolean) => post<{ ok: boolean }>(`/entries/${id}/read`, { is_read: isRead }),
     star: (id: number, starred: boolean) => post<{ ok: boolean }>(`/entries/${id}/star`, { starred }),
     thumb: (id: number, thumb: 1 | -1 | null) => post<{ ok: boolean }>(`/entries/${id}/thumb`, { thumb }),
   },
 
-  categories: () => get<CategoryInfo[]>('/categories'),
+  categories: () => get<CategoriesResponse>('/categories'),
 
   feeds: {
     list: () => get<Feed[]>('/feeds'),

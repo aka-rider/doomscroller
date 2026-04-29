@@ -313,6 +313,17 @@ const [entries] = createResource(feedId, fetchEntries);
 - Wrap in `<Suspense>` to show a fallback while loading.
 - `<ErrorBoundary>` catches resource errors.
 - **Always** pair `createResource` with both `<Suspense>` and `<ErrorBoundary>`.
+- **`createResource(source, fetcher)` skips the fetcher when `source` is falsy.**
+  `0`, `null`, `undefined`, `false`, and `""` are all falsy — the fetcher simply never runs.
+  If your source signal can legitimately be `0`, offset it: `() => value() + 1`.
+
+```tsx
+// BROKEN — fetchKey starts at 0 (falsy), resource never loads
+const [data] = createResource(() => refetchCounter(), fetchData);
+
+// CORRECT — always truthy, still changes when counter increments
+const [data] = createResource(() => refetchCounter() + 1, fetchData);
+```
 
 ## 11. Refs Must Be Assigned, Not Initialized
 

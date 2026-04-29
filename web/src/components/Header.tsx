@@ -1,4 +1,5 @@
 import { Show } from 'solid-js';
+import { Menu, X, Settings } from 'lucide-solid';
 
 interface HeaderProps {
   showUnreadOnly: boolean;
@@ -17,8 +18,8 @@ export const Header = (props: HeaderProps) => {
         title="Toggle sidebar"
         aria-label="Toggle sidebar"
       >
-        <Show when={props.sidebarOpen} fallback={<span>☰</span>}>
-          <span>✕</span>
+        <Show when={props.sidebarOpen} fallback={<Menu size={20} />}>
+          <X size={20} />
         </Show>
       </button>
 
@@ -39,7 +40,7 @@ export const Header = (props: HeaderProps) => {
           style={{ "font-size": "var(--text-sm)" }}
           title="Settings (,)"
         >
-          ⚙
+          <Settings size={18} />
         </button>
       </div>
     </header>

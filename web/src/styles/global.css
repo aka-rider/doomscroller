@@ -812,12 +812,25 @@ button:hover {
     font-weight: 500;
 }
 
+.tag-sidebar-item.is-dormant {
+    opacity: 0.4;
+    color: var(--text-tertiary);
+}
+
+.tag-sidebar-item.is-dormant.is-active {
+    opacity: 1;
+    color: var(--text-primary);
+}
+
 .tag-sidebar-label {
     flex: 1;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
 }
 
 .tag-sidebar-indicator {
@@ -905,12 +918,26 @@ button:hover {
     margin-top: var(--space-2);
 }
 
+.entry-card-actions button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
 .entry-card-star {
-    font-size: var(--text-sm);
+    display: inline-flex;
+    align-items: center;
+    opacity: 0.6;
+    transition: opacity 0.15s var(--ease-out);
+}
+
+.entry-card-star:hover {
+    opacity: 1;
 }
 
 .entry-card-thumb {
-    font-size: var(--text-sm);
+    display: inline-flex;
+    align-items: center;
     opacity: 0.4;
     transition: opacity 0.15s var(--ease-out);
 }
@@ -921,12 +948,12 @@ button:hover {
 
 .entry-card-thumb.is-active-up {
     opacity: 1;
-    filter: saturate(1.5);
+    color: var(--relevance-high);
 }
 
 .entry-card-thumb.is-active-down {
     opacity: 1;
-    filter: saturate(1.5);
+    color: var(--text-tertiary);
 }
 
 /* Dismiss animation for thumbed-down entries */
@@ -949,6 +976,84 @@ button:hover {
 .entry-card.is-dismissed {
     animation: entry-dismiss 0.3s var(--ease-out) forwards;
     overflow: hidden;
+}
+
+/* --- Swipe gesture (touch devices only) --- */
+
+@media (pointer: coarse) {
+    .entry-card-swipe-wrapper {
+        position: relative;
+        overflow: hidden;
+    }
+
+    .entry-card-swipe-action {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+        padding: 0 var(--space-6);
+        color: var(--text-tertiary);
+        opacity: 0;
+        transition: opacity 0.15s var(--ease-out), color 0.15s var(--ease-out);
+    }
+
+    .entry-card-swipe-action--right {
+        left: 0;
+        justify-content: flex-start;
+    }
+
+    .entry-card-swipe-action--left {
+        right: 0;
+        justify-content: flex-end;
+    }
+
+    .entry-card-swipe-wrapper:has(.entry-card[style]) .entry-card-swipe-action {
+        opacity: 0.5;
+    }
+
+    .entry-card-swipe-action.is-active {
+        opacity: 1;
+        color: var(--text-primary);
+    }
+
+    .entry-card-swipe-action.is-activated {
+        opacity: 1;
+        color: var(--text-accent);
+    }
+
+    .entry-card-swipe-action-inner {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: transform 0.1s var(--ease-out);
+    }
+
+    .entry-card-swipe-action-label {
+        font-family: var(--font-sans);
+        font-size: var(--text-xs);
+        white-space: nowrap;
+        user-select: none;
+    }
+
+    .entry-card-swipe-wrapper .entry-card {
+        position: relative;
+        z-index: 1;
+        background: var(--bg-primary);
+    }
+
+    /* Spring slide-back with bounce overshoot */
+    .entry-card.is-springing {
+        transition: transform 0.55s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+}
+
+/* Hide swipe actions on non-touch devices */
+@media (pointer: fine) {
+    .entry-card-swipe-action {
+        display: none;
+    }
 }
 
 .pref-card.whitelist {
@@ -1301,7 +1406,9 @@ button:hover {
 }
 
 .reader-view-link {
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
     font-family: var(--font-sans);
     font-size: var(--text-sm);
     color: var(--text-accent);
@@ -1469,6 +1576,9 @@ button:hover {
     text-decoration: none;
     flex-shrink: 0;
     margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
 }
 
 .entry-card-noise-open:hover {
@@ -1510,6 +1620,9 @@ button:hover {
     border: none;
     cursor: pointer;
     padding: var(--space-2) 0;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
 }
 
 .article-page-back:hover {
@@ -1552,6 +1665,64 @@ button:hover {
     margin-top: var(--space-6);
     padding-top: var(--space-4);
     border-top: 1px solid var(--border);
+}
+
+/* --- Article Feedback CTA --- */
+
+.article-feedback {
+    margin-top: var(--space-8);
+    padding: var(--space-6);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-lg, 12px);
+    text-align: center;
+}
+
+.article-feedback-prompt {
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
+    color: var(--text-secondary);
+    margin-bottom: var(--space-4);
+}
+
+.article-feedback-confirm {
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    color: var(--text-tertiary);
+}
+
+.article-feedback-actions {
+    display: flex;
+    justify-content: center;
+    gap: var(--space-4);
+}
+
+.article-feedback-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--bg-primary);
+    cursor: pointer;
+    transition: all 0.15s var(--ease-out);
+    color: var(--text-tertiary);
+}
+
+.article-feedback-btn:hover {
+    border-color: var(--text-secondary);
+    color: var(--text-primary);
+}
+
+.article-feedback-btn--up.is-active {
+    color: var(--relevance-high);
+    border-color: var(--relevance-high);
+}
+
+.article-feedback-btn--down.is-active {
+    color: var(--text-tertiary);
+    border-color: var(--text-tertiary);
 }
 
 .article-page-nav {

@@ -1,4 +1,5 @@
 import { createResource, For, Suspense } from 'solid-js';
+import { Star } from 'lucide-solid';
 import { api } from '../lib/api';
 import type { CategoryInfo, ViewMode } from '../lib/types';
 
@@ -9,10 +10,15 @@ interface TagSidebarProps {
   onSelectCategory: (slug: string | null) => void;
   activeView: ViewMode;
   onSelectView: (view: ViewMode) => void;
+  refetchKey?: (() => number) | undefined;
 }
 
 export const TagSidebar = (props: TagSidebarProps) => {
-  const [categories] = createResource(() => api.categories());
+  const fetchKey = () => (props.refetchKey?.() ?? 0) + 1;
+  const [categoriesData] = createResource(fetchKey, () => api.categories());
+
+  const catList = () => categoriesData()?.categories ?? [];
+  const globalWhitelistCount = () => categoriesData()?.globalWhitelistCount ?? 0;
 
   return (
     <nav class="tag-sidebar">
@@ -35,15 +41,18 @@ export const TagSidebar = (props: TagSidebarProps) => {
           classList={{ 'is-active': props.activeView === 'favorites' }}
           onClick={() => props.onSelectView('favorites')}
         >
-          <span class="tag-sidebar-label">{'\u2605'} Favorites</span>
+          <span class="tag-sidebar-label"><Star size={14} fill="currentColor" /> Favorites</span>
         </button>
 
         <Suspense fallback={<div class="meta" style={{ padding: "var(--space-3)" }}>Loading…</div>}>
-          <For each={(categories() ?? []).filter(c => c.entryCount > 0)}>
+          <For each={catList().filter(c => c.entryCount > 0)}>
             {(cat: CategoryInfo) => (
               <button
                 class="tag-sidebar-item"
-                classList={{ 'is-active': props.activeView === 'feed' && props.activeCategory === cat.slug }}
+                classList={{
+                  'is-active': props.activeView === 'feed' && props.activeCategory === cat.slug,
+                  'is-dormant': globalWhitelistCount() > 0 && cat.whitelistedTagCount === 0,
+                }}
                 onClick={() => {
                   props.onSelectView('feed');
                   props.onSelectCategory(cat.slug);

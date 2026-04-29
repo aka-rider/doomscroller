@@ -25,6 +25,7 @@
       "name": "web",
       "version": "0.1.0",
       "dependencies": {
+        "lucide-solid": "^1.12.0",
         "solid-js": "^1.9.0",
       },
       "devDependencies": {
@@ -280,6 +281,8 @@
     "linkedom": ["linkedom@0.18.12", "", { "dependencies": { "css-select": "^5.1.0", "cssom": "^0.5.0", "html-escaper": "^3.0.3", "htmlparser2": "^10.0.0", "uhyphen": "^0.2.0" }, "peerDependencies": { "canvas": ">= 2" }, "optionalPeers": ["canvas"] }, "sha512-jalJsOwIKuQJSeTvsgzPe9iJzyfVaEJiEXl+25EkKevsULHvMJzpNqwvj1jOESWdmgKDiXObyjOYwlUqG7wo1Q=="],
 
     "lru-cache": ["lru-cache@5.1.1", "", { "dependencies": { "yallist": "^3.0.2" } }, "sha512-KpNARQA3Iwv+jTA0utUVVbrh+Jlrr1Fv0e56GGzAFOXN7dk/FviaDW8LHmK52DlcH4WP2n6gI8vN1aesBFgo9w=="],
+
+    "lucide-solid": ["lucide-solid@1.12.0", "", { "peerDependencies": { "solid-js": "^1.4.7" } }, "sha512-oBThfGJA2G6eLq6GfxahnX15wbGY8ntCb7hCtozlj3nT0tQLiZXIRNhzWxICZ1uJZngzBx5CLlNUJkYtmE0JcQ=="],
 
     "merge-anything": ["merge-anything@5.1.7", "", { "dependencies": { "is-what": "^4.1.8" } }, "sha512-eRtbOb1N5iyH0tkQDAoQ4Ipsp/5qSR79Dzrz8hEPxRX10RWWR/iQXdoKmBSRCThY1Fh5EhISDtpSc93fpxUniQ=="],
 

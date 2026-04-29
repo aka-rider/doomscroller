@@ -16,6 +16,7 @@ interface AppShellProps {
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
   onCloseSidebar: () => void;
+  categoryRefetchKey?: () => number;
 }
 
 export const AppShell = (props: AppShellProps) => {
@@ -37,6 +38,7 @@ export const AppShell = (props: AppShellProps) => {
             onSelectCategory={props.onSelectCategory}
             activeView={props.activeView}
             onSelectView={props.onSelectView}
+            refetchKey={props.categoryRefetchKey}
           />
         </div>
 
@@ -58,6 +60,7 @@ export const AppShell = (props: AppShellProps) => {
                 props.onSelectView(view);
                 props.onCloseSidebar();
               }}
+              refetchKey={props.categoryRefetchKey}
             />
           </div>
         </Show>

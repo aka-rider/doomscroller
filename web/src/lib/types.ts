@@ -90,6 +90,12 @@ export interface CategoryInfo {
   slug: string;
   label: string;
   entryCount: number;
+  whitelistedTagCount: number;
+}
+
+export interface CategoriesResponse {
+  categories: CategoryInfo[];
+  globalWhitelistCount: number;
 }
 
 export interface OnboardingStatus {

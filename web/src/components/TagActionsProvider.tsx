@@ -1,16 +1,18 @@
-import { createContext, useContext, onCleanup } from 'solid-js';
+import { createContext, createSignal, useContext, onCleanup } from 'solid-js';
 import type { JSX } from 'solid-js';
 import { api } from '../lib/api';
 import { useEntries } from './EntriesProvider';
 
 export interface TagActions {
   handleCycleTagPreference: (tagId: number, newMode: 'none' | 'whitelist' | 'blacklist') => void;
+  categoryRefetchKey: () => number;
 }
 
 const TagActionsContext = createContext<TagActions>();
 
 export const TagActionsProvider = (props: { children: JSX.Element }) => {
   const { entries, mutateEntries } = useEntries();
+  const [categoryRefetchKey, setCategoryRefetchKey] = createSignal(0);
 
   const prefTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
@@ -33,6 +35,8 @@ export const TagActionsProvider = (props: { children: JSX.Element }) => {
       prefTimers.delete(tagId);
       try {
         await api.tags.setPreference(tagId, newMode);
+        // Bump refetch key to refresh sidebar category whitelist counts
+        setCategoryRefetchKey(k => k + 1);
       } catch {
         mutateEntries(prev);
       }
@@ -41,6 +45,7 @@ export const TagActionsProvider = (props: { children: JSX.Element }) => {
 
   const actions: TagActions = {
     handleCycleTagPreference,
+    categoryRefetchKey,
   };
 
   return (

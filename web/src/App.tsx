@@ -56,6 +56,7 @@ const AppInner = () => {
           sidebarOpen={nav.sidebarOpen()}
           onToggleSidebar={() => nav.setSidebarOpen(!nav.sidebarOpen())}
           onCloseSidebar={() => nav.setSidebarOpen(false)}
+          categoryRefetchKey={tagActions.categoryRefetchKey}
         >
           <ErrorBoundary fallback={(err) => (
             <div style={{ padding: "var(--space-8)", "text-align": "center" }}>
@@ -96,6 +97,8 @@ const AppInner = () => {
                       onTagClick={handleTagClick}
                       onThumb={entryActions.handleThumb}
                       onCycleTagPreference={tagActions.handleCycleTagPreference}
+                      onSwipeRead={entryActions.handleToggleRead}
+                      onSwipeTrash={(id) => entryActions.handleThumb(id, -1)}
                     />
                   )}
                 </For>

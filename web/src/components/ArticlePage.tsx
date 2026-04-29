@@ -1,4 +1,5 @@
 import { Show, For, createSignal, createEffect } from 'solid-js';
+import { ThumbsUp, Star, ChevronLeft, ExternalLink, Trash2 } from 'lucide-solid';
 import type { EntryWithMeta } from '../lib/api';
 import { api, timeAgo, contentLabel, readTime } from '../lib/api';
 import { TagPill } from './TagPill';
@@ -33,11 +34,19 @@ export const ArticlePage = (props: ArticlePageProps) => {
   const [readerLoading, setReaderLoading] = createSignal(false);
   const [readerError, setReaderError] = createSignal('');
 
+  const [feedbackGiven, setFeedbackGiven] = createSignal<1 | -1 | null>(null);
+
   const isStarred = () => props.entry.is_starred === 1;
   const thumbValue = () => props.entry.thumb;
   const entryTags = () => props.entry.tags ?? [];
   const depthLbl = () => contentLabel(props.entry.depth_score);
   const readTimeLbl = () => readTime(props.entry.word_count);
+
+  // Reset feedback confirmation when entry changes
+  createEffect(() => {
+    props.entry.id; // track
+    setFeedbackGiven(null);
+  });
 
   // Re-run when entry changes (prev/next navigation)
   createEffect(() => {
@@ -64,36 +73,16 @@ export const ArticlePage = (props: ArticlePageProps) => {
       {/* Top bar */}
       <div class="article-page-topbar">
         <button class="article-page-back" onClick={props.onBack}>
-          ← Back to feed
+          <ChevronLeft size={16} /> Back to feed
         </button>
         <div class="article-page-actions">
-          <button
-            onClick={() => {
-              if (props.onThumb) props.onThumb(props.entry.id, thumbValue() === 1 ? null : 1);
-            }}
-            class="entry-card-thumb"
-            classList={{ 'is-active-up': thumbValue() === 1 }}
-            title="Thumb up (u)"
-          >
-            {'\u{1F44D}'}
-          </button>
-          <button
-            onClick={() => {
-              if (props.onThumb) props.onThumb(props.entry.id, thumbValue() === -1 ? null : -1);
-            }}
-            class="entry-card-thumb"
-            classList={{ 'is-active-down': thumbValue() === -1 }}
-            title="Thumb down (d)"
-          >
-            {'\u{1F44E}'}
-          </button>
           <button
             onClick={() => props.onStar(props.entry.id, !isStarred())}
             class="entry-card-star"
             style={{ color: isStarred() ? 'var(--star)' : 'var(--text-tertiary)' }}
             title={isStarred() ? 'Unstar (s)' : 'Star (s)'}
           >
-            {isStarred() ? '\u2605' : '\u2606'}
+            <Star size={16} fill={isStarred() ? 'currentColor' : 'none'} />
           </button>
         </div>
       </div>
@@ -121,7 +110,7 @@ export const ArticlePage = (props: ArticlePageProps) => {
           class="reader-view-link"
           style={{ "margin-top": "var(--space-3)", display: "inline-block" }}
         >
-          Open original ↗
+          Open original <ExternalLink size={14} />
         </a>
       </header>
 
@@ -175,6 +164,41 @@ export const ArticlePage = (props: ArticlePageProps) => {
         </For>
       </div>
 
+      {/* More like this — feedback CTA */}
+      <div class="article-feedback">
+        <Show when={feedbackGiven() === null} fallback={
+          <p class="article-feedback-confirm">
+            {feedbackGiven() === 1 ? "Got it — we'll show you more like this" : "Got it — we'll show you less like this"}
+          </p>
+        }>
+          <p class="article-feedback-prompt">Want more like this?</p>
+          <div class="article-feedback-actions">
+            <button
+              onClick={() => {
+                props.onThumb(props.entry.id, thumbValue() === 1 ? null : 1);
+                setFeedbackGiven(1);
+              }}
+              class="article-feedback-btn article-feedback-btn--up"
+              classList={{ 'is-active': thumbValue() === 1 }}
+              title="More like this"
+            >
+              <ThumbsUp size={20} fill={thumbValue() === 1 ? 'currentColor' : 'none'} />
+            </button>
+            <button
+              onClick={() => {
+                props.onThumb(props.entry.id, thumbValue() === -1 ? null : -1);
+                setFeedbackGiven(-1);
+              }}
+              class="article-feedback-btn article-feedback-btn--down"
+              classList={{ 'is-active': thumbValue() === -1 }}
+              title="Trash this"
+            >
+              <Trash2 size={20} />
+            </button>
+          </div>
+        </Show>
+      </div>
+
       {/* Open original — bottom */}
       <a
         href={props.entry.url}
@@ -183,7 +207,7 @@ export const ArticlePage = (props: ArticlePageProps) => {
         class="reader-view-link reader-view-link--bottom"
         style={{ "margin-top": "var(--space-6)", display: "inline-block" }}
       >
-        Open original ↗
+        Open original <ExternalLink size={14} />
       </a>
 
       {/* Prev / Next navigation */}

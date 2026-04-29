@@ -5,6 +5,7 @@ import { useEntries } from './EntriesProvider';
 
 export interface EntryActions {
   handleMarkRead: (id: number) => void;
+  handleToggleRead: (id: number) => void;
   handleStar: (id: number, starred: boolean) => void;
   handleThumb: (id: number, thumb: 1 | -1 | null) => void;
 }
@@ -19,6 +20,19 @@ export const EntryActionsProvider = (props: { children: JSX.Element }) => {
     mutateEntries(prev.map(e => e.id === id ? { ...e, is_read: 1 } : e));
     try {
       await api.entries.markRead(id);
+    } catch {
+      mutateEntries(prev);
+    }
+  };
+
+  const handleToggleRead = async (id: number) => {
+    const prev = entries() ?? [];
+    const entry = prev.find(e => e.id === id);
+    if (!entry) return;
+    const newRead = entry.is_read === 1 ? 0 : 1;
+    mutateEntries(prev.map(e => e.id === id ? { ...e, is_read: newRead } : e));
+    try {
+      await api.entries.setRead(id, newRead === 1);
     } catch {
       mutateEntries(prev);
     }
@@ -56,6 +70,7 @@ export const EntryActionsProvider = (props: { children: JSX.Element }) => {
 
   const actions: EntryActions = {
     handleMarkRead,
+    handleToggleRead,
     handleStar,
     handleThumb,
   };

@@ -143,6 +143,10 @@ export const markEntryRead = (db: Database, id: EntryId): void => {
   db.run('UPDATE entries SET is_read = 1 WHERE id = ?', [id]);
 };
 
+export const setEntryRead = (db: Database, id: EntryId, isRead: boolean): void => {
+  db.run('UPDATE entries SET is_read = ? WHERE id = ?', [isRead ? 1 : 0, id]);
+};
+
 export const markEntryStarred = (db: Database, id: EntryId, starred: boolean): void => {
   db.run('UPDATE entries SET is_starred = ? WHERE id = ?', [starred ? 1 : 0, id]);
 };
