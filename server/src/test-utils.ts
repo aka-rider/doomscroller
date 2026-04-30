@@ -61,14 +61,14 @@ export const insertTestEntry = (
   overrides: Partial<{
     guid: string; url: string; title: string; author: string;
     content_html: string; summary: string; image_url: string | null;
-    published_at: number | null; is_read: number; is_starred: number;
+    published_at: number | null; is_read: number; thumb: number | null;
     tagged_at: number | null;
   }> = {},
 ): EntryId => {
   const guid = overrides.guid ?? `guid-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
   const result = db.run(
-    `INSERT INTO entries (feed_id, guid, url, title, author, content_html, summary, image_url, published_at, is_read, is_starred, tagged_at)
+    `INSERT INTO entries (feed_id, guid, url, title, author, content_html, summary, image_url, published_at, is_read, thumb, tagged_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       feedId,
@@ -81,7 +81,7 @@ export const insertTestEntry = (
       overrides.image_url ?? null,
       overrides.published_at ?? Math.floor(Date.now() / 1000),
       overrides.is_read ?? 0,
-      overrides.is_starred ?? 0,
+      overrides.thumb ?? null,
       overrides.tagged_at ?? null,
     ],
   );

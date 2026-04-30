@@ -173,31 +173,32 @@ describe('API Routes', () => {
     });
   });
 
-  describe('POST /entries/:id/star', () => {
-    test('stars an entry', async () => {
+  describe('POST /entries/:id/thumb', () => {
+    test('thumb up adds to favorites', async () => {
       const feedId = insertTestFeed(db);
       const entryId = insertTestEntry(db, feedId);
 
-      const res = await req('POST', `/entries/${entryId}/star`, { starred: true });
+      const res = await req('POST', `/entries/${entryId}/thumb`, { thumb: 1 });
       expect(res.status).toBe(200);
-      expect(queries.getEntryById(db, entryId)!.is_starred).toBe(1);
+      expect(queries.getEntryById(db, entryId)!.thumb).toBe(1);
     });
 
-    test('unstars an entry', async () => {
+    test('thumb null removes from favorites', async () => {
       const feedId = insertTestFeed(db);
-      const entryId = insertTestEntry(db, feedId, { is_starred: 1 });
+      const entryId = insertTestEntry(db, feedId, { thumb: 1 });
 
-      const res = await req('POST', `/entries/${entryId}/star`, { starred: false });
+      const res = await req('POST', `/entries/${entryId}/thumb`, { thumb: null });
       expect(res.status).toBe(200);
-      expect(queries.getEntryById(db, entryId)!.is_starred).toBe(0);
+      expect(queries.getEntryById(db, entryId)!.thumb).toBeNull();
     });
 
-    test('returns 400 for missing starred field', async () => {
+    test('thumb down dismisses', async () => {
       const feedId = insertTestFeed(db);
       const entryId = insertTestEntry(db, feedId);
 
-      const res = await req('POST', `/entries/${entryId}/star`, {});
-      expect(res.status).toBe(400);
+      const res = await req('POST', `/entries/${entryId}/thumb`, { thumb: -1 });
+      expect(res.status).toBe(200);
+      expect(queries.getEntryById(db, entryId)!.thumb).toBe(-1);
     });
   });
 

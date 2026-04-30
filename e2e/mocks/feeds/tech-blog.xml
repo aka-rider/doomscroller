@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+    <channel>
+        <title>Tech Blog</title>
+        <link>http://tech-blog.test</link>
+        <description>A blog about technology, programming, and software engineering.</description>
+        <item>
+            <title>Rust Systems Programming</title>
+            <link>http://tech-blog.test/rust</link>
+            <description>Exploring the benefits of Rust for writing safe systems code.</description>
+            <guid>rust-1</guid>
+            <pubDate>Mon, 01 Jan 2024 10:00:00 GMT</pubDate>
+        </item>
+        <item>
+            <title>Neural Network Architectures</title>
+            <link>http://tech-blog.test/ml</link>
+            <description>Deep dive into modern ML architectures and neural network performance.</description>
+            <guid>ml-1</guid>
+            <pubDate>Tue, 02 Jan 2024 10:00:00 GMT</pubDate>
+        </item>
+        <item>
+            <title>Open-Source Library Releases</title>
+            <link>http://tech-blog.test/oss</link>
+            <description>New programming libraries released this month.</description>
+            <guid>oss-1</guid>
+            <pubDate>Wed, 03 Jan 2024 10:00:00 GMT</pubDate>
+        </item>
+        <item>
+            <title>API Design Patterns</title>
+            <link>http://tech-blog.test/api-design</link>
+            <description>Best practices for REST and GraphQL API design.</description>
+            <guid>api-1</guid>
+            <pubDate>Thu, 04 Jan 2024 10:00:00 GMT</pubDate>
+        </item>
+        <item>
+            <title>Database Optimization Techniques</title>
+            <link>http://tech-blog.test/db-opt</link>
+            <description>How to tune your database for maximum throughput.</description>
+            <guid>db-1</guid>
+            <pubDate>Fri, 05 Jan 2024 10:00:00 GMT</pubDate>
+        </item>
+    </channel>
+</rss>

@@ -55,7 +55,6 @@ export interface Entry {
   readonly published_at: number | null;
   readonly fetched_at: number;
   readonly is_read: number;
-  readonly is_starred: number;
   readonly tagged_at: number | null;
   readonly embedding: Buffer | null;
   readonly relevance_score: number | null;
@@ -65,6 +64,7 @@ export interface Entry {
   readonly word_count: number | null;          // article word count
   readonly content_full: string | null;        // Readability-extracted clean HTML
   readonly extracted_at: number | null;        // when content was extracted
+  readonly target_url: string | null;          // actual article URL for link-only entries
 }
 
 export interface Tag {

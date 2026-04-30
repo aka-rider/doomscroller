@@ -17,6 +17,8 @@ interface AppShellProps {
   onToggleSidebar: () => void;
   onCloseSidebar: () => void;
   categoryRefetchKey?: () => number;
+  activeFeedId: number | null;
+  onRefreshComplete?: () => void;
 }
 
 export const AppShell = (props: AppShellProps) => {
@@ -28,6 +30,8 @@ export const AppShell = (props: AppShellProps) => {
         onOpenSettings={props.onOpenSettings}
         onToggleSidebar={props.onToggleSidebar}
         sidebarOpen={props.sidebarOpen}
+        activeFeedId={props.activeFeedId}
+        onRefreshComplete={props.onRefreshComplete}
       />
 
       <div class="app-shell">

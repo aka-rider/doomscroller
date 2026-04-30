@@ -6,7 +6,6 @@ import { useEntries } from './EntriesProvider';
 export interface EntryActions {
   handleMarkRead: (id: number) => void;
   handleToggleRead: (id: number) => void;
-  handleStar: (id: number, starred: boolean) => void;
   handleThumb: (id: number, thumb: 1 | -1 | null) => void;
 }
 
@@ -38,19 +37,6 @@ export const EntryActionsProvider = (props: { children: JSX.Element }) => {
     }
   };
 
-  const handleStar = async (id: number, starred: boolean) => {
-    const prev = entries() ?? [];
-    const updated = prev.map(e => e.id === id ? { ...e, is_starred: starred ? 1 : 0 } : e);
-    mutateEntries(updated);
-    syncActiveArticle(updated);
-    try {
-      await api.entries.star(id, starred);
-    } catch {
-      mutateEntries(prev);
-      syncActiveArticle(prev);
-    }
-  };
-
   const handleThumb = async (id: number, thumb: 1 | -1 | null) => {
     const prev = entries() ?? [];
     if (thumb === -1) {
@@ -71,7 +57,6 @@ export const EntryActionsProvider = (props: { children: JSX.Element }) => {
   const actions: EntryActions = {
     handleMarkRead,
     handleToggleRead,
-    handleStar,
     handleThumb,
   };
 

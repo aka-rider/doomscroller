@@ -1,4 +1,4 @@
--- Doomscroller schema v007
+-- Doomscroller schema v009
 -- SQLite with WAL mode. All timestamps are unixepoch integers.
 -- Embeddings stored as raw Little-Endian Float32Array BLOBs (768 × 4 = 3072 bytes).
 
@@ -49,7 +49,6 @@ CREATE TABLE IF NOT EXISTS entries (
     published_at    INTEGER,
     fetched_at      INTEGER NOT NULL DEFAULT (unixepoch()),
     is_read         INTEGER NOT NULL DEFAULT 0,
-    is_starred      INTEGER NOT NULL DEFAULT 0,
     tagged_at       INTEGER,
     embedding       BLOB,              -- 768 × float32 = 3072 bytes, raw LE binary
     relevance_score REAL,              -- cosine sim to user preference vector (-1.0 to 1.0)
@@ -57,6 +56,7 @@ CREATE TABLE IF NOT EXISTS entries (
     thumb           INTEGER,           -- 1=up, -1=down, NULL=none
     extractive_summary TEXT,            -- TextRank: 2-4 key sentences from article
     word_count      INTEGER,            -- article word count for "N min read"
+    target_url      TEXT,               -- actual article URL for link-only entries (Reddit, HN)
     content_full    TEXT,               -- Readability-extracted clean HTML (cached)
     extracted_at    INTEGER,            -- when full content was extracted (for cache expiry)
     UNIQUE(feed_id, guid)
@@ -112,7 +112,6 @@ CREATE TABLE IF NOT EXISTS jobs (
 CREATE INDEX IF NOT EXISTS idx_entries_feed_pub    ON entries(feed_id, published_at DESC);
 CREATE INDEX IF NOT EXISTS idx_entries_published   ON entries(published_at DESC);
 CREATE INDEX IF NOT EXISTS idx_entries_unread      ON entries(is_read, published_at DESC) WHERE is_read = 0;
-CREATE INDEX IF NOT EXISTS idx_entries_starred     ON entries(is_starred, published_at DESC) WHERE is_starred = 1;
 CREATE INDEX IF NOT EXISTS idx_entries_tagged      ON entries(tagged_at) WHERE tagged_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_tags_slug           ON tags(slug);
 CREATE INDEX IF NOT EXISTS idx_tags_category       ON tags(category_slug);
@@ -120,4 +119,6 @@ CREATE INDEX IF NOT EXISTS idx_entry_tags_tag      ON entry_tags(tag_id, entry_i
 CREATE INDEX IF NOT EXISTS idx_jobs_pending        ON jobs(priority DESC, run_after ASC) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_jobs_running        ON jobs(started_at) WHERE status = 'running';
 CREATE INDEX IF NOT EXISTS idx_entries_thumb        ON entries(thumb) WHERE thumb IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_entries_dismissed     ON entries(thumb) WHERE thumb = -1;
+CREATE INDEX IF NOT EXISTS idx_entries_favorites    ON entries(thumb, published_at DESC) WHERE thumb = 1;
+CREATE INDEX IF NOT EXISTS idx_entries_dismissed    ON entries(thumb) WHERE thumb = -1;
+CREATE INDEX IF NOT EXISTS idx_entries_unextracted  ON entries(id) WHERE extractive_summary IS NULL AND content_html != '';

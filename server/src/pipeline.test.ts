@@ -102,7 +102,6 @@ describe('End-to-end pipeline', () => {
     expect(firstEntry.summary).toContain('Full content of the first post');
     expect(firstEntry.image_url).toBe('https://test.blog/img/first.jpg');
     expect(firstEntry.is_read).toBe(0);
-    expect(firstEntry.is_starred).toBe(0);
 
     // ── Step 7: Verify dedup — re-inserting the same entries returns null ──
     for (const entry of parsed.entries) {
@@ -159,9 +158,9 @@ describe('End-to-end pipeline', () => {
     queries.markEntryRead(db, entryId);
     expect(queries.getEntryById(db, entryId)!.is_read).toBe(1);
 
-    // Star
-    queries.markEntryStarred(db, entryId, true);
-    expect(queries.getEntryById(db, entryId)!.is_starred).toBe(1);
+    // Thumb up (favorite)
+    queries.setEntryThumb(db, entryId, 1);
+    expect(queries.getEntryById(db, entryId)!.thumb).toBe(1);
 
     // Verify unread filter
     const unreadRes = await app.request('http://localhost/api/entries?unread=true');

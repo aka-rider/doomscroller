@@ -206,7 +206,7 @@ describe('Fever API', () => {
         author: 'Alice',
         content_html: '<p>Content</p>',
         url: 'https://t.co/1',
-        is_starred: 1,
+        thumb: 1,
         is_read: 0,
         published_at: now,
       });
@@ -259,8 +259,8 @@ describe('Fever API', () => {
   describe('?saved_item_ids', () => {
     test('returns comma-separated starred entry IDs', async () => {
       const feedId = insertTestFeed(db);
-      insertTestEntry(db, feedId, { is_starred: 0 });
-      const starred = insertTestEntry(db, feedId, { is_starred: 1 });
+      insertTestEntry(db, feedId, { is_read: 0 });
+      const starred = insertTestEntry(db, feedId, { thumb: 1 });
 
       const res = await feverGet('saved_item_ids');
       const data = await res.json() as any;
@@ -283,22 +283,22 @@ describe('Fever API', () => {
       expect(queries.getEntryById(db, entryId)!.is_read).toBe(1);
     });
 
-    test('mark item as saved (starred)', async () => {
+    test('mark item as saved (favorite)', async () => {
       const feedId = insertTestFeed(db);
       const entryId = insertTestEntry(db, feedId);
 
       await feverPost('', { mark: 'item', as: 'saved', id: String(entryId) });
 
-      expect(queries.getEntryById(db, entryId)!.is_starred).toBe(1);
+      expect(queries.getEntryById(db, entryId)!.thumb).toBe(1);
     });
 
-    test('mark item as unsaved (unstarred)', async () => {
+    test('mark item as unsaved (unfavorite)', async () => {
       const feedId = insertTestFeed(db);
-      const entryId = insertTestEntry(db, feedId, { is_starred: 1 });
+      const entryId = insertTestEntry(db, feedId, { thumb: 1 });
 
       await feverPost('', { mark: 'item', as: 'unsaved', id: String(entryId) });
 
-      expect(queries.getEntryById(db, entryId)!.is_starred).toBe(0);
+      expect(queries.getEntryById(db, entryId)!.thumb).toBeNull();
     });
 
     test('mark feed as read', async () => {

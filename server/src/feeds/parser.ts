@@ -22,6 +22,7 @@ export interface ParsedEntry {
   readonly summary: string;
   readonly imageUrl: string | null;
   readonly publishedAt: number | null; // unixepoch
+  readonly targetUrl: string | null; // actual article URL for link-only entries
 }
 
 const parser = new XMLParser({
@@ -61,29 +62,32 @@ export const parseFeed = (xml: string): Result<ParsedFeed, string> => {
 
 const parseRSS2 = (channel: Record<string, unknown>): ParsedFeed => {
   const items = (channel.item as Record<string, unknown>[] | undefined) ?? [];
+  const siteUrl = str(channel.link);
 
   return {
     title: cleanText(str(channel.title)),
-    siteUrl: str(channel.link),
+    siteUrl,
     description: cleanText(str(channel.description)),
-    entries: items.map(parseRSS2Item),
+    entries: items.map(item => parseRSS2Item(item, siteUrl)),
   };
 };
 
-const parseRSS2Item = (item: Record<string, unknown>): ParsedEntry => {
+const parseRSS2Item = (item: Record<string, unknown>, feedSiteUrl: string): ParsedEntry => {
   const contentEncoded = str(item['content:encoded']);
   const description = str(item.description);
   const contentHtml = contentEncoded || description;
+  const entryUrl = str(item.link);
 
   return {
-    guid: str(item.guid?.toString?.() ?? item.link),
-    url: str(item.link),
+    guid: str(item.guid) || str(item.link),
+    url: entryUrl,
     title: cleanText(str(item.title)),
     author: cleanText(str(item['dc:creator'] ?? item.author)),
     contentHtml,
     summary: stripHtml(contentHtml).slice(0, 1000),
     imageUrl: extractImageUrl(item, contentHtml),
     publishedAt: parseDate(str(item.pubDate ?? item['dc:date'])),
+    targetUrl: detectTargetUrl(contentHtml, entryUrl, feedSiteUrl),
   };
 };
 
@@ -97,11 +101,11 @@ const parseAtom = (feed: Record<string, unknown>): ParsedFeed => {
     title: cleanText(str(feed.title)),
     siteUrl: link,
     description: cleanText(str(feed.subtitle)),
-    entries: entries.map(parseAtomEntry),
+    entries: entries.map(entry => parseAtomEntry(entry, link)),
   };
 };
 
-const parseAtomEntry = (entry: Record<string, unknown>): ParsedEntry => {
+const parseAtomEntry = (entry: Record<string, unknown>, feedSiteUrl: string): ParsedEntry => {
   const link = findLink(entry.link, 'alternate') ?? findLink(entry.link);
   const content = entry.content;
   const summary = entry.summary;
@@ -127,6 +131,7 @@ const parseAtomEntry = (entry: Record<string, unknown>): ParsedEntry => {
     summary: stripHtml(html).slice(0, 1000),
     imageUrl: extractImageUrl(entry, html),
     publishedAt: parseDate(str(entry.published ?? entry.updated)),
+    targetUrl: detectTargetUrl(html, link, feedSiteUrl),
   };
 };
 
@@ -135,13 +140,93 @@ const parseAtomEntry = (entry: Record<string, unknown>): ParsedEntry => {
 const parseRDF = (rdf: Record<string, unknown>): ParsedFeed => {
   const channel = rdf.channel as Record<string, unknown> | undefined ?? {};
   const items = (rdf.item as Record<string, unknown>[] | undefined) ?? [];
+  const siteUrl = str(channel.link);
 
   return {
     title: cleanText(str(channel.title)),
-    siteUrl: str(channel.link),
+    siteUrl,
     description: cleanText(str(channel.description)),
-    entries: items.map(parseRSS2Item), // RDF items have the same shape as RSS 2.0
+    entries: items.map(item => parseRSS2Item(item, siteUrl)), // RDF items have the same shape as RSS 2.0
   };
+};
+
+// --- Link-Only Entry Detection ---
+
+// RFC 1918 + loopback + link-local patterns for SSRF protection
+const PRIVATE_IP_REGEX = /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|169\.254\.|0\.|::1|fc|fd|fe80)/i;
+
+// Detect if an entry is "link-only" (e.g., Reddit, HN) and extract the actual article URL.
+// Returns the target URL if detected, null otherwise.
+export const detectTargetUrl = (
+  contentHtml: string,
+  entryUrl: string,
+  feedSiteUrl: string,
+): string | null => {
+  const plainText = stripHtml(contentHtml).trim();
+
+  // Only consider entries with very short content (typical of link aggregators)
+  if (plainText.length > 200) return null;
+
+  // Extract all href URLs from the content
+  const hrefRegex = /<a\b[^>]*\bhref=["']([^"']+)["'][^>]*>/gi;
+  const candidates: string[] = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = hrefRegex.exec(contentHtml)) !== null) {
+    const href = match[1]!;
+    candidates.push(href);
+  }
+
+  if (candidates.length === 0) return null;
+
+  // Get domains for comparison
+  const entryDomain = safeDomain(entryUrl);
+  const feedDomain = safeDomain(feedSiteUrl);
+
+  // Filter to external, valid HTTP(S) URLs that aren't comments/reply links
+  for (const candidate of candidates) {
+    // Must be absolute http/https URL
+    if (!candidate.startsWith('http://') && !candidate.startsWith('https://')) continue;
+
+    // Validate URL structure
+    let parsed: URL;
+    try {
+      parsed = new URL(candidate);
+    } catch {
+      continue;
+    }
+
+    // Protocol validation (strict http/https only)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') continue;
+
+    // SSRF protection: reject private/reserved IP ranges
+    if (PRIVATE_IP_REGEX.test(parsed.hostname)) continue;
+    if (parsed.hostname === 'localhost') continue;
+
+    const candidateDomain = parsed.hostname.replace(/^www\./, '');
+
+    // Must be on a different domain than the feed/entry (external link)
+    if (candidateDomain === entryDomain || candidateDomain === feedDomain) continue;
+
+    // Skip comment/discussion/reply links
+    const path = parsed.pathname + parsed.search;
+    if (/\/(comments|reply|respond|share)\b/i.test(path)) continue;
+    if (parsed.searchParams.has('reply')) continue;
+
+    // This is our target URL — take the first valid external link
+    return candidate;
+  }
+
+  return null;
+};
+
+// Safely extract domain from a URL, stripping www prefix
+const safeDomain = (url: string): string => {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return '';
+  }
 };
 
 // --- Helpers ---

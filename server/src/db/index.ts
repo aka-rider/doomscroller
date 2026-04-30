@@ -38,45 +38,26 @@ const applySchema = (db: Database): void => {
 
 // Incremental migrations for schema changes to existing tables.
 // Each migration checks before applying so they are idempotent.
+// NOTE: All migrations through v008 have been collapsed into schema.sql.
+// New migrations go here.
 const applyMigrations = (db: Database): void => {
-  // v004: Add thumb column to entries
-  const cols = db.query<{ name: string }, []>(
-    "SELECT name FROM pragma_table_info('entries') WHERE name = 'thumb'"
-  ).all();
-  if (cols.length === 0) {
-    db.exec('ALTER TABLE entries ADD COLUMN thumb INTEGER');
-    db.exec('CREATE INDEX IF NOT EXISTS idx_entries_thumb ON entries(thumb) WHERE thumb IS NOT NULL');
-    db.exec('CREATE INDEX IF NOT EXISTS idx_entries_dismissed ON entries(thumb) WHERE thumb = -1');
+  // v009: Add target_url column for link-only entries (Reddit, HN)
+  const cols = db.query<{ name: string }, []>('PRAGMA table_info(entries)').all();
+  if (!cols.some(c => c.name === 'target_url')) {
+    db.exec('ALTER TABLE entries ADD COLUMN target_url TEXT');
   }
 
-  // v005: Add category_slug column to tags
-  const tagCols = db.query<{ name: string }, []>(
-    "SELECT name FROM pragma_table_info('tags') WHERE name = 'category_slug'"
-  ).all();
-  if (tagCols.length === 0) {
-    db.exec('ALTER TABLE tags ADD COLUMN category_slug TEXT REFERENCES categories(slug)');
-    db.exec('CREATE INDEX IF NOT EXISTS idx_tags_category ON tags(category_slug)');
-  }
-
-  // v006: Add depth_score column to entries
-  const depthCol = db.query<{ name: string }, []>(
-    "SELECT name FROM pragma_table_info('entries') WHERE name = 'depth_score'"
-  ).all();
-  if (depthCol.length === 0) {
-    db.exec('ALTER TABLE entries ADD COLUMN depth_score REAL');
-    db.exec('CREATE INDEX IF NOT EXISTS idx_entries_depth ON entries(depth_score) WHERE depth_score IS NOT NULL');
-  }
-
-  // v007: Add reader view columns to entries
-  const extractCol = db.query<{ name: string }, []>(
-    "SELECT name FROM pragma_table_info('entries') WHERE name = 'extractive_summary'"
-  ).all();
-  if (extractCol.length === 0) {
-    db.exec('ALTER TABLE entries ADD COLUMN extractive_summary TEXT');
-    db.exec('ALTER TABLE entries ADD COLUMN word_count INTEGER');
-    db.exec('ALTER TABLE entries ADD COLUMN content_full TEXT');
-    db.exec('ALTER TABLE entries ADD COLUMN extracted_at INTEGER');
-    db.exec("CREATE INDEX IF NOT EXISTS idx_entries_unextracted ON entries(id) WHERE extractive_summary IS NULL AND content_html != ''");
+  // v010: Clear all feed etags to force re-fetch after GUID bug fix.
+  // One-time: only runs if config flag not set.
+  const guidFixApplied = db.query<{ value: string }, [string]>(
+    'SELECT value FROM config WHERE key = ?'
+  ).get('guid_fix_refetch_done');
+  if (!guidFixApplied) {
+    db.exec('UPDATE feeds SET etag = NULL, last_modified = NULL');
+    db.run(
+      'INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)',
+      ['guid_fix_refetch_done', '1']
+    );
   }
 };
 

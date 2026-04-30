@@ -4,16 +4,18 @@ import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { existsSync, mkdirSync } from 'node:fs';
 import { resolve, join } from 'node:path';
-import type { AppConfig, FeedId } from './types';
+import type { AppConfig, FeedId, EntryId } from './types';
 import { DEFAULT_CONFIG } from './types';
 import { initDb, closeDb } from './db/index';
 import * as queries from './db/queries';
 import { createApiRoutes } from './api/routes';
 import { createFeverRoutes } from './api/fever';
-import { startWorker, enqueue, cleanupJobs } from './jobs/queue';
+import { startWorker, enqueue, cleanupJobs, claimNextJob, completeJob, failJob } from './jobs/queue';
 import { fetchFeed, isNotModified } from './feeds/fetcher';
 import { parseFeed } from './feeds/parser';
 import { tagBatch, embedMissingTags, embedMissingCategories, embedDepthAnchors } from './tagger/batch';
+import { extractArticle } from './feeds/extractor';
+import { extractiveSummarize, wordCount } from './feeds/summarizer';
 import type { JobHandler } from './jobs/queue';
 
 // --- Config from environment ---
@@ -49,9 +51,11 @@ if (seeded > 0) {
 
 // --- Seed starter feeds on first boot ---
 
-const seededFeeds = queries.seedStarterFeeds(db);
-if (seededFeeds > 0) {
-  console.log(`[init] Seeded ${seededFeeds} starter feeds`);
+if (process.env.E2E_MODE !== 'true') {
+  const seededFeeds = queries.seedStarterFeeds(db);
+  if (seededFeeds > 0) {
+    console.log(`[init] Seeded ${seededFeeds} starter feeds`);
+  }
 }
 
 // --- Seed default config values ---
@@ -158,8 +162,15 @@ const handleFetchFeed: JobHandler = async (payloadStr) => {
       summary: entry.summary,
       image_url: entry.imageUrl,
       published_at: entry.publishedAt,
+      target_url: entry.targetUrl,
     });
-    if (id !== null) newEntries++;
+    if (id !== null) {
+      newEntries++;
+      // Enqueue content extraction for link-only entries
+      if (entry.targetUrl) {
+        enqueue(db, 'extract_content', { entry_id: id });
+      }
+    }
   }
 
   if (newEntries > 0) {
@@ -171,10 +182,10 @@ const handleCleanup: JobHandler = async () => {
   const cleaned = cleanupJobs(db, 86400 * 7); // 7 days
   if (cleaned > 0) console.log(`[cleanup] Removed ${cleaned} old jobs`);
 
-  // Also clean old entries (keep 30 days of read entries, keep all unread/starred)
+  // Also clean old entries (keep 30 days of read entries, keep all unread/favorited)
   const cutoff = Math.floor(Date.now() / 1000) - 86400 * 30;
   const result = db.run(
-    'DELETE FROM entries WHERE is_read = 1 AND is_starred = 0 AND published_at < ?',
+    'DELETE FROM entries WHERE is_read = 1 AND (thumb IS NULL OR thumb = -1) AND published_at < ?',
     [cutoff]
   );
   if (result.changes > 0) console.log(`[cleanup] Removed ${result.changes} old read entries`);
@@ -189,12 +200,42 @@ const handleTagBatch: JobHandler = async () => {
   await tagBatch(db, config);
 };
 
+const handleExtractContent: JobHandler = async (payloadStr) => {
+  const payload = JSON.parse(payloadStr) as { entry_id: EntryId };
+  const entry = queries.getEntryById(db, payload.entry_id);
+  if (!entry || !entry.target_url) return;
+
+  const result = await extractArticle(entry.target_url);
+  if (!result.ok) {
+    throw new Error(`Extract failed for ${entry.target_url}: ${result.error}`);
+  }
+
+  // Store extracted content
+  queries.updateEntryContent(db, entry.id, result.value.contentHtml);
+
+  // Update summary and word count from extracted text for better embeddings
+  const plainText = result.value.textContent;
+  const summary = plainText.slice(0, 1000);
+  const wc = wordCount(plainText);
+  const extractiveSummaryText = extractiveSummarize(plainText);
+
+  db.run(
+    'UPDATE entries SET summary = ?, word_count = ?, extractive_summary = ? WHERE id = ?',
+    [summary, wc, extractiveSummaryText, entry.id],
+  );
+
+  // Clear tagged_at and enqueue re-tagging so embeddings reflect the real content
+  db.run('UPDATE entries SET tagged_at = NULL, embedding = NULL WHERE id = ?', [entry.id]);
+  enqueue(db, 'tag_batch', {});
+};
+
 // --- Start job worker ---
 
-const worker = startWorker(db, {
+let worker = startWorker(db, {
   fetch_feed: handleFetchFeed,
   cleanup: handleCleanup,
   tag_batch: handleTagBatch,
+  extract_content: handleExtractContent,
 }, { pollIntervalMs: 1000 });
 
 // --- Schedule recurring jobs ---
@@ -227,14 +268,69 @@ setInterval(() => enqueue(db, 'cleanup', {}), 86400 * 1000);
 const app = new Hono();
 
 // Security headers
-app.use('*', secureHeaders());
+if (process.env.E2E_MODE !== 'true') {
+  app.use('*', secureHeaders());
+}
 
 // CORS for local development (Vite dev server on different port)
 app.use('/api/*', cors({ origin: ['http://localhost:5173', 'http://localhost:6767'] }));
 app.use('/fever/*', cors({ origin: '*' })); // Fever clients need this
 
+// E2E Support Callbacks
+let e2eCallbacks: { reset: () => Promise<void>, triggerJobs: () => Promise<void> } | undefined;
+if (process.env.E2E_MODE === 'true') {
+  e2eCallbacks = {
+    reset: async () => {
+      worker.stop();
+      // Wait for any running jobs to finish (hacky flush)
+      await Bun.sleep(100);
+
+      const tables = ['entries', 'feeds', 'jobs', 'entry_tags', 'tag_preferences', 'config'];
+      for (const table of tables) {
+        db.run(`DELETE FROM ${table}`);
+      }
+
+      queries.seedBuiltinCategories(db);
+      queries.seedBuiltinTags(db);
+
+      if (!queries.getConfig(db, 'reader_cache_days')) {
+        queries.setConfig(db, 'reader_cache_days', '7');
+      }
+
+      worker = startWorker(db, {
+        fetch_feed: handleFetchFeed,
+        cleanup: handleCleanup,
+        tag_batch: handleTagBatch,
+      }, { pollIntervalMs: 1000 });
+    },
+    triggerJobs: async () => {
+      // synchronously run all pending jobs
+      let count = 0;
+      while (true) {
+        const job = claimNextJob(db);
+        if (!job) break;
+        const handler = {
+          fetch_feed: handleFetchFeed,
+          cleanup: handleCleanup,
+          tag_batch: handleTagBatch,
+        }[job.type];
+
+        if (handler) {
+          try {
+            await handler(job.payload);
+            completeJob(db, job.id);
+          } catch (err: any) {
+            failJob(db, job.id, err.message);
+          }
+        }
+        count++;
+      }
+    }
+  };
+}
+
 // API routes
-app.route('/api', createApiRoutes(db, config));
+app.route('/api', createApiRoutes(db, config, e2eCallbacks));
 app.route('/fever', createFeverRoutes(db));
 
 // Health check

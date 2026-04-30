@@ -1,5 +1,5 @@
 import { Show, For, createSignal, createEffect } from 'solid-js';
-import { ThumbsUp, Star, ChevronLeft, ExternalLink, Trash2 } from 'lucide-solid';
+import { ThumbsUp, ChevronLeft, ExternalLink, Trash2 } from 'lucide-solid';
 import type { EntryWithMeta } from '../lib/api';
 import { api, timeAgo, contentLabel, readTime } from '../lib/api';
 import { TagPill } from './TagPill';
@@ -24,7 +24,6 @@ interface ArticlePageProps {
   nextTitle: string | null;
   onPrev: () => void;
   onNext: () => void;
-  onStar: (id: number, starred: boolean) => void;
   onThumb: (id: number, thumb: 1 | -1 | null) => void;
   onCycleTagPreference?: (tagId: number, newMode: 'none' | 'whitelist' | 'blacklist') => void;
 }
@@ -33,10 +32,10 @@ export const ArticlePage = (props: ArticlePageProps) => {
   const [readerContent, setReaderContent] = createSignal<string | null>(null);
   const [readerLoading, setReaderLoading] = createSignal(false);
   const [readerError, setReaderError] = createSignal('');
+  const [contentSourceUrl, setContentSourceUrl] = createSignal<string | null>(null);
 
   const [feedbackGiven, setFeedbackGiven] = createSignal<1 | -1 | null>(null);
 
-  const isStarred = () => props.entry.is_starred === 1;
   const thumbValue = () => props.entry.thumb;
   const entryTags = () => props.entry.tags ?? [];
   const depthLbl = () => contentLabel(props.entry.depth_score);
@@ -56,10 +55,12 @@ export const ArticlePage = (props: ArticlePageProps) => {
     setReaderContent(null);
     setReaderLoading(true);
     setReaderError('');
+    setContentSourceUrl(null);
     api.entries.getContent(id)
       .then(data => {
         setReaderContent(data.content_full ?? props.entry.content_html ?? null);
         if (data.error) setReaderError(data.error);
+        if (data.target_url) setContentSourceUrl(data.target_url);
       })
       .catch(() => {
         setReaderContent(props.entry.content_html ?? null);
@@ -75,16 +76,6 @@ export const ArticlePage = (props: ArticlePageProps) => {
         <button class="article-page-back" onClick={props.onBack}>
           <ChevronLeft size={16} /> Back to feed
         </button>
-        <div class="article-page-actions">
-          <button
-            onClick={() => props.onStar(props.entry.id, !isStarred())}
-            class="entry-card-star"
-            style={{ color: isStarred() ? 'var(--star)' : 'var(--text-tertiary)' }}
-            title={isStarred() ? 'Unstar (s)' : 'Star (s)'}
-          >
-            <Star size={16} fill={isStarred() ? 'currentColor' : 'none'} />
-          </button>
-        </div>
       </div>
 
       {/* Article header */}
@@ -112,6 +103,11 @@ export const ArticlePage = (props: ArticlePageProps) => {
         >
           Open original <ExternalLink size={14} />
         </a>
+        <Show when={contentSourceUrl()}>
+          <span class="meta" style={{ "margin-left": "var(--space-3)", "font-size": "var(--text-xs)" }}>
+            Content from <a href={contentSourceUrl()!} target="_blank" rel="noopener noreferrer">{(() => { try { return new URL(contentSourceUrl()!).hostname.replace(/^www\./, ''); } catch { return 'external site'; } })()}</a>
+          </span>
+        </Show>
       </header>
 
       {/* Article body */}

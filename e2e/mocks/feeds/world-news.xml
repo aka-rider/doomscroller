@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+    <channel>
+        <title>World News</title>
+        <link>http://world-news.test</link>
+        <description>Global politics and world news.</description>
+        <item>
+            <title>Presidential Elections Update</title>
+            <link>http://world-news.test/elections</link>
+            <description>The latest polls on the upcoming presidential election.</description>
+            <guid>news-1</guid>
+            <pubDate>Mon, 01 Jan 2024 11:00:00 GMT</pubDate>
+        </item>
+        <item>
+            <title>Climate Summit Outcomes</title>
+            <link>http://world-news.test/climate</link>
+            <description>International leaders gather to discuss climate change initiatives.</description>
+            <guid>news-2</guid>
+            <pubDate>Tue, 02 Jan 2024 11:00:00 GMT</pubDate>
+        </item>
+        <item>
+            <title>International Trade Agreements</title>
+            <link>http://world-news.test/trade</link>
+            <description>New trade deals signed between major global economies.</description>
+            <guid>news-3</guid>
+            <pubDate>Wed, 03 Jan 2024 11:00:00 GMT</pubDate>
+        </item>
+        <item>
+            <title>UN Security Policy</title>
+            <link>http://world-news.test/un</link>
+            <description>The UN security council meets to discuss recent international conflicts.</description>
+            <guid>news-4</guid>
+            <pubDate>Thu, 04 Jan 2024 11:00:00 GMT</pubDate>
+        </item>
+        <item>
+            <title>Economic Growth Indicators</title>
+            <link>http://world-news.test/economy</link>
+            <description>Global economy shows signs of recovery in Q1.</description>
+            <guid>news-5</guid>
+            <pubDate>Fri, 05 Jan 2024 11:00:00 GMT</pubDate>
+        </item>
+    </channel>
+</rss>

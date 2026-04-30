@@ -13,8 +13,20 @@ import { extractArticle } from '../feeds/extractor';
 import { CATEGORIES, CATEGORY_MAP } from '../categories';
 import type { CategoryView } from '../categories';
 
-export const createApiRoutes = (db: Database, config: AppConfig): Hono => {
+export const createApiRoutes = (db: Database, config: AppConfig, e2e?: { reset: () => Promise<void>, triggerJobs: () => Promise<void> }): Hono => {
   const api = new Hono();
+
+  // --- E2E Helpers ---
+  if (process.env.E2E_MODE === 'true' && e2e) {
+    api.post('/test/reset', async (c) => {
+      await e2e.reset();
+      return c.json({ ok: true });
+    });
+    api.post('/test/trigger-jobs', async (c) => {
+      await e2e.triggerJobs();
+      return c.json({ ok: true });
+    });
+  }
 
   // --- Feeds ---
 
@@ -48,6 +60,29 @@ export const createApiRoutes = (db: Database, config: AppConfig): Hono => {
     return c.json({ ok: true });
   });
 
+  api.post('/feeds/:id/refresh', (c) => {
+    const id = Number(c.req.param('id')) as FeedId;
+    const feed = queries.getFeedById(db, id);
+    if (!feed) return c.json({ error: 'Feed not found' }, 404);
+
+    // Check if a pending fetch_feed job already exists for this feed
+    const existing = db.query<{ id: number }, [string]>(
+      `SELECT id FROM jobs WHERE type = 'fetch_feed' AND status = 'pending' AND payload LIKE ?`
+    ).get(`%"feed_id":${id}%`);
+
+    if (existing) {
+      return c.json({ ok: true, message: 'Refresh already queued' });
+    }
+
+    // Clear etag + last_modified to force full re-fetch
+    db.run('UPDATE feeds SET etag = NULL, last_modified = NULL WHERE id = ?', [id]);
+
+    // Enqueue high-priority fetch
+    enqueue(db, 'fetch_feed', { feed_id: id }, { priority: 10 });
+
+    return c.json({ ok: true, message: 'Refresh queued' });
+  });
+
   // --- Entries ---
 
   const entryListSchema = z.object({
@@ -57,9 +92,10 @@ export const createApiRoutes = (db: Database, config: AppConfig): Hono => {
     category: z.string().optional(),
     unread: z.enum(['true', 'false']).optional(),
     filter: z.enum(['all']).optional(),
-    starred: z.enum(['true']).optional(),
+    favorites: z.enum(['true']).optional(),
     thumb: z.enum(['-1']).optional(),
     noise: z.enum(['true']).optional(),  // Show noise-only view
+    feed: z.coerce.number().int().optional(),  // Filter by feed id
   });
 
   api.get('/entries', (c) => {
@@ -68,9 +104,9 @@ export const createApiRoutes = (db: Database, config: AppConfig): Hono => {
 
     const { limit, offset } = params.data;
 
-    // Starred (favorites) view
-    if (params.data.starred === 'true') {
-      const entries = queries.getStarredEntries(db, { limit, offset });
+    // Favorites view (thumb = 1)
+    if (params.data.favorites === 'true') {
+      const entries = queries.getFavoriteEntries(db, { limit, offset });
       const entryIds = entries.map(e => e.id);
       const tagMap = queries.getTagsForEntries(db, entryIds);
       return c.json(entries.map(e => ({ ...e, tags: tagMap.get(e.id) ?? [] })));
@@ -87,6 +123,19 @@ export const createApiRoutes = (db: Database, config: AppConfig): Hono => {
     // Noise view
     if (params.data.noise === 'true') {
       const entries = queries.getNoiseEntries(db, { limit, offset });
+      const entryIds = entries.map(e => e.id);
+      const tagMap = queries.getTagsForEntries(db, entryIds);
+      return c.json(entries.map(e => ({ ...e, tags: tagMap.get(e.id) ?? [] })));
+    }
+
+    // Feed filter view — scoped to one feed, chronological, respects unread toggle
+    if (params.data.feed != null) {
+      const entries = queries.getEntries(db, {
+        limit,
+        offset,
+        feedId: params.data.feed as FeedId,
+        unreadOnly: params.data.unread === 'true',
+      });
       const entryIds = entries.map(e => e.id);
       const tagMap = queries.getTagsForEntries(db, entryIds);
       return c.json(entries.map(e => ({ ...e, tags: tagMap.get(e.id) ?? [] })));
@@ -148,17 +197,6 @@ export const createApiRoutes = (db: Database, config: AppConfig): Hono => {
     } else {
       queries.markEntryRead(db, id);
     }
-    return c.json({ ok: true });
-  });
-
-  api.post('/entries/:id/star', async (c) => {
-    const id = Number(c.req.param('id')) as EntryId;
-    const body = z.object({ starred: z.boolean() }).safeParse(await c.req.json());
-    if (!body.success) return c.json({ error: body.error.message }, 400);
-
-    queries.markEntryStarred(db, id, body.data.starred);
-
-    // Star is now just a bookmark — no preference vector update
     return c.json({ ok: true });
   });
 
@@ -425,24 +463,27 @@ ${outlines}
     const cacheExpiry = Math.floor(Date.now() / 1000) - cacheDays * 86400;
 
     if (row.content_full && row.extracted_at && row.extracted_at > cacheExpiry) {
-      return c.json({ content_full: row.content_full, cached: true });
+      return c.json({ content_full: row.content_full, cached: true, target_url: row.target_url });
     }
+
+    // Use target_url (actual article) if available, otherwise fall back to entry url
+    const extractionUrl = row.target_url ?? row.url;
 
     // Fetch and extract on demand
-    if (!row.url) {
-      return c.json({ content_full: row.content_html || null, cached: false });
+    if (!extractionUrl) {
+      return c.json({ content_full: row.content_html || null, cached: false, target_url: row.target_url });
     }
 
-    const result = await extractArticle(row.url);
+    const result = await extractArticle(extractionUrl);
     if (!result.ok) {
       // Fallback to RSS content
-      return c.json({ content_full: row.content_html || null, cached: false, error: result.error });
+      return c.json({ content_full: row.content_html || null, cached: false, error: result.error, target_url: row.target_url });
     }
 
     // Cache the extracted content
     queries.updateEntryContent(db, id, result.value.contentHtml);
 
-    return c.json({ content_full: result.value.contentHtml, cached: false });
+    return c.json({ content_full: result.value.contentHtml, cached: false, target_url: row.target_url });
   });
 
   // --- Settings ---

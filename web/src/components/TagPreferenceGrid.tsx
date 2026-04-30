@@ -59,19 +59,38 @@ const CollapsibleGroup = (props: {
 }) => {
   const [open, setOpen] = createSignal(false);
 
+  const allWhitelisted = () => props.tags.every(t => props.preferences.get(t.id) === 'whitelist');
+
+  const handleSelectAll = (e: MouseEvent) => {
+    e.stopPropagation();
+    const mode = allWhitelisted() ? 'none' : 'whitelist';
+    for (const tag of props.tags) {
+      props.onToggle(tag.id, mode);
+    }
+  };
+
   return (
     <div class="pref-grid-group">
-      <button
-        class="pref-grid-group-title"
-        onClick={() => setOpen(v => !v)}
-        style={{ cursor: 'pointer', background: 'none', border: 'none', padding: '0', width: '100%', 'text-align': 'left', display: 'flex', 'align-items': 'center', gap: 'var(--space-2)' }}
-      >
-        <span style={{ 'font-size': '0.65em', opacity: '0.6' }}>{open() ? '\u25BC' : '\u25B6'}</span>
-        {formatGroup(props.group)}
-        <span style={{ opacity: '0.5', 'font-weight': '400', 'font-size': '0.85em' }}>
-          ({props.tags.length})
-        </span>
-      </button>
+      <div style={{ display: 'flex', 'align-items': 'center', gap: 'var(--space-2)' }}>
+        <button
+          class="pref-grid-group-title"
+          onClick={() => setOpen(v => !v)}
+          style={{ cursor: 'pointer', background: 'none', border: 'none', padding: '0', flex: '1', 'text-align': 'left', display: 'flex', 'align-items': 'center', gap: 'var(--space-2)' }}
+        >
+          <span style={{ 'font-size': '0.65em', opacity: '0.6' }}>{open() ? '\u25BC' : '\u25B6'}</span>
+          {formatGroup(props.group)}
+          <span style={{ opacity: '0.5', 'font-weight': '400', 'font-size': '0.85em' }}>
+            ({props.tags.length})
+          </span>
+        </button>
+        <button
+          class={`pref-grid-select-all ${allWhitelisted() ? 'active' : ''}`}
+          onClick={handleSelectAll}
+          title={allWhitelisted() ? 'Deselect all' : 'Select all'}
+        >
+          {allWhitelisted() ? '\u2713 All' : 'Select All'}
+        </button>
+      </div>
       <Show when={open()}>
         <div class="pref-grid">
           <For each={props.tags}>

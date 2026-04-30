@@ -193,14 +193,17 @@ describe('Entry queries', () => {
     expect(q.getEntryById(db, id)!.is_read).toBe(1);
   });
 
-  test('markEntryStarred toggles is_starred', () => {
+  test('setEntryThumb toggles thumb value', () => {
     const id = insertTestEntry(db, feedId);
 
-    q.markEntryStarred(db, id, true);
-    expect(q.getEntryById(db, id)!.is_starred).toBe(1);
+    q.setEntryThumb(db, id, 1);
+    expect(q.getEntryById(db, id)!.thumb).toBe(1);
 
-    q.markEntryStarred(db, id, false);
-    expect(q.getEntryById(db, id)!.is_starred).toBe(0);
+    q.setEntryThumb(db, id, null);
+    expect(q.getEntryById(db, id)!.thumb).toBeNull();
+
+    q.setEntryThumb(db, id, -1);
+    expect(q.getEntryById(db, id)!.thumb).toBe(-1);
   });
 
   test('getEntriesByFeed returns entries in published_at DESC order', () => {

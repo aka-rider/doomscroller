@@ -23,12 +23,12 @@ export interface EntryWithMeta {
   published_at: number | null;
   fetched_at: number;
   is_read: number;
-  is_starred: number;
   tagged_at: number | null;
   thumb: number | null;
   depth_score: number | null;
   extractive_summary: string | null;
   word_count: number | null;
+  target_url: string | null;
   feed_title: string;
   feed_site_url: string;
   tags: EntryTag[];
@@ -107,6 +107,7 @@ export interface EntryContent {
   content_full: string | null;
   cached: boolean;
   error?: string;
+  target_url?: string | null;
 }
 
 export interface Settings {

@@ -87,10 +87,10 @@ export const createFeverRoutes = (db: Database): Hono => {
     }
 
     if (params.has('saved_item_ids')) {
-      const starred = db.query<{ id: number }, []>(
-        'SELECT id FROM entries WHERE is_starred = 1'
+      const favorites = db.query<{ id: number }, []>(
+        'SELECT id FROM entries WHERE thumb = 1'
       ).all();
-      response['saved_item_ids'] = starred.map(r => r.id).join(',');
+      response['saved_item_ids'] = favorites.map(r => r.id).join(',');
     }
 
     // Handle mark actions (POST only)
@@ -104,9 +104,9 @@ export const createFeverRoutes = (db: Database): Hono => {
         if (asType === 'read') {
           queries.markEntryRead(db, id as EntryId);
         } else if (asType === 'saved') {
-          queries.markEntryStarred(db, id as EntryId, true);
+          queries.setEntryThumb(db, id as EntryId, 1);
         } else if (asType === 'unsaved') {
-          queries.markEntryStarred(db, id as EntryId, false);
+          queries.setEntryThumb(db, id as EntryId, null);
         }
       } else if (mark === 'feed' && asType === 'read') {
         const before = Number(formData['before'] ?? Math.floor(Date.now() / 1000));
@@ -153,7 +153,7 @@ const feverItem = (entry: Entry) => ({
   author: entry.author,
   html: entry.content_html,
   url: entry.url,
-  is_saved: entry.is_starred,
+  is_saved: entry.thumb === 1 ? 1 : 0,
   is_read: entry.is_read,
   created_on_time: entry.published_at ?? entry.fetched_at,
 });

@@ -73,16 +73,18 @@ export const insertEntry = (
     summary: string;
     image_url: string | null;
     published_at: number | null;
+    target_url: string | null;
   },
 ): EntryId | null => {
   try {
     const result = db.run(
       `INSERT OR IGNORE INTO entries
-        (feed_id, guid, url, title, author, content_html, summary, image_url, published_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (feed_id, guid, url, title, author, content_html, summary, image_url, published_at, target_url)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         entry.feed_id, entry.guid, entry.url, entry.title, entry.author,
         entry.content_html, entry.summary, entry.image_url, entry.published_at,
+        entry.target_url,
       ]
     );
     if (result.changes === 0) return null; // duplicate guid
@@ -94,11 +96,15 @@ export const insertEntry = (
 
 export const getEntries = (
   db: Database,
-  opts: { limit: number; offset: number; tag?: string; tagSlugs?: string[]; unreadOnly?: boolean },
+  opts: { limit: number; offset: number; tag?: string; tagSlugs?: string[]; unreadOnly?: boolean; feedId?: FeedId },
 ): Array<Entry & { feed_title: string; feed_site_url: string }> => {
   const conditions: string[] = [];
   const params: unknown[] = [];
 
+  if (opts.feedId != null) {
+    conditions.push('e.feed_id = ?');
+    params.push(opts.feedId);
+  }
   if (opts.unreadOnly) {
     conditions.push('e.is_read = 0');
   }
@@ -147,13 +153,11 @@ export const setEntryRead = (db: Database, id: EntryId, isRead: boolean): void =
   db.run('UPDATE entries SET is_read = ? WHERE id = ?', [isRead ? 1 : 0, id]);
 };
 
-export const markEntryStarred = (db: Database, id: EntryId, starred: boolean): void => {
-  db.run('UPDATE entries SET is_starred = ? WHERE id = ?', [starred ? 1 : 0, id]);
-};
-
 export const setEntryThumb = (db: Database, id: EntryId, thumb: 1 | -1 | null): void => {
   db.run('UPDATE entries SET thumb = ? WHERE id = ?', [thumb, id]);
 };
+
+export const isFavorite = (entry: { thumb: number | null }): boolean => entry.thumb === 1;
 
 // --- Tags ---
 
@@ -264,9 +268,9 @@ export const getEntriesByTag = (db: Database, tagId: TagId, limit: number, offse
     'SELECT e.* FROM entries e JOIN entry_tags et ON e.id = et.entry_id WHERE et.tag_id = ? ORDER BY e.published_at DESC LIMIT ? OFFSET ?',
   ).all(tagId, limit, offset);
 
-// --- Starred Entries (Favorites) ---
+// --- Favorite Entries (thumb = 1) ---
 
-export const getStarredEntries = (
+export const getFavoriteEntries = (
   db: Database,
   opts: { limit: number; offset: number },
 ): Array<Entry & { feed_title: string; feed_site_url: string }> =>
@@ -274,7 +278,7 @@ export const getStarredEntries = (
     `SELECT e.*, f.title as feed_title, f.site_url as feed_site_url
      FROM entries e
      JOIN feeds f ON e.feed_id = f.id
-     WHERE e.is_starred = 1
+     WHERE e.thumb = 1
      ORDER BY e.published_at DESC
      LIMIT ? OFFSET ?`,
   ).all(opts.limit, opts.offset);
@@ -609,10 +613,7 @@ export const getUntaggedEntries = (db: Database, limit: number): Array<Entry & {
      LIMIT ?`,
   ).all(limit);
 
-export const getStarredEntryEmbeddings = (db: Database): Array<{ id: EntryId; embedding: Buffer; is_starred: number }> =>
-  db.query<{ id: EntryId; embedding: Buffer; is_starred: number }, []>(
-    'SELECT id, embedding, is_starred FROM entries WHERE is_starred = 1 AND embedding IS NOT NULL ORDER BY published_at DESC',
-  ).all();
+
 
 export const getEntriesWithEmbeddings = (db: Database, limit: number, offset: number): Array<{ id: EntryId; embedding: Buffer }> =>
   db.query<{ id: EntryId; embedding: Buffer }, [number, number]>(
@@ -656,9 +657,9 @@ export const updateEntrySummary = (
 export const getEntryContent = (
   db: Database,
   id: EntryId,
-): { url: string; content_full: string | null; content_html: string; extracted_at: number | null } | null =>
-  db.query<{ url: string; content_full: string | null; content_html: string; extracted_at: number | null }, [EntryId]>(
-    'SELECT url, content_full, content_html, extracted_at FROM entries WHERE id = ?',
+): { url: string; target_url: string | null; content_full: string | null; content_html: string; extracted_at: number | null } | null =>
+  db.query<{ url: string; target_url: string | null; content_full: string | null; content_html: string; extracted_at: number | null }, [EntryId]>(
+    'SELECT url, target_url, content_full, content_html, extracted_at FROM entries WHERE id = ?',
   ).get(id);
 
 export const updateEntryContent = (

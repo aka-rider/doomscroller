@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  doomscroller:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    environment:
+      - PORT=6767
+      - E2E_MODE=true
+      - DATA_DIR=/app/data
+      - EMBEDDINGS_URL=http://mock-embeds:8081
+    user: "root"
+    tmpfs:
+      - /app/data
+    healthcheck:
+      test: ["CMD-SHELL", "bun -e \"fetch('http://localhost:6767/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 2s
+
+  mock-embeds:
+    build:
+      context: .
+      dockerfile: Dockerfile.mocks
+    command: ["bun", "run", "mocks/embedding-server.ts"]
+    healthcheck:
+      test: ["CMD-SHELL", "bun -e \"fetch('http://localhost:8081/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 2s
+
+  mock-feeds:
+    build:
+      context: .
+      dockerfile: Dockerfile.mocks
+    command: ["bun", "run", "mocks/feed-server.ts"]
+    healthcheck:
+      test: ["CMD-SHELL", "bun -e \"fetch('http://localhost:3333/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 2s
+
+  playwright:
+    build:
+      context: .
+      dockerfile: Dockerfile.playwright
+    depends_on:
+      doomscroller:
+        condition: service_healthy
+      mock-embeds:
+        condition: service_healthy
+      mock-feeds:
+        condition: service_healthy
+    ipc: host
+    volumes:
+      - ./results:/e2e/results
+      - ./playwright-report:/e2e/playwright-report

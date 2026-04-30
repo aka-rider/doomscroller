@@ -61,7 +61,7 @@ export const useKeyboard = (config: UseKeyboardConfig) => {
         }
         case 's': {
           e.preventDefault();
-          entryActions.handleStar(article.id, !article.is_starred);
+          entryActions.handleThumb(article.id, article.thumb === 1 ? null : 1);
           return;
         }
         case 'u': {
@@ -119,7 +119,7 @@ export const useKeyboard = (config: UseKeyboardConfig) => {
         if (idx >= 0 && idx < list.length) {
           e.preventDefault();
           const entry = list[idx]!;
-          entryActions.handleStar(entry.id, !entry.is_starred);
+          entryActions.handleThumb(entry.id, entry.thumb === 1 ? null : 1);
         }
         break;
       }

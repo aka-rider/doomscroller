@@ -13,5 +13,21 @@
         "start": "bun run --filter server start",
         "check": "bun run --filter '*' check",
         "db:reset": "rm -f data/doomscroller.db && bun run --filter server start"
-    }
+    },
+    "version": "1.0.0",
+    "description": "Doomscroller (sarcastic) self-hosted RSS reader that helps you cut through the noise.",
+    "main": "index.js",
+    "devDependencies": {},
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/aka-rider/doomscroller.git"
+    },
+    "keywords": [],
+    "author": "",
+    "license": "ISC",
+    "type": "commonjs",
+    "bugs": {
+        "url": "https://github.com/aka-rider/doomscroller/issues"
+    },
+    "homepage": "https://github.com/aka-rider/doomscroller#readme"
 }

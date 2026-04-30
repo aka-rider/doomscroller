@@ -1,5 +1,5 @@
 import { Show, For, createSignal, createEffect, batch } from 'solid-js';
-import { ThumbsUp, Star, ExternalLink, Mail, MailOpen, Trash2 } from 'lucide-solid';
+import { ThumbsUp, ExternalLink, Mail, MailOpen, Trash2 } from 'lucide-solid';
 import type { EntryWithMeta } from '../lib/api';
 import { timeAgo, contentLabel, readTime } from '../lib/api';
 import { useSwipe } from '../lib/use-swipe';
@@ -9,7 +9,6 @@ interface EntryCardProps {
   entry: EntryWithMeta;
   onOpenArticle: (entry: EntryWithMeta) => void;
   onMarkRead: (id: number) => void;
-  onStar: (id: number, starred: boolean) => void;
   onTagClick: (slug: string) => void;
   onThumb?: (id: number, thumb: 1 | -1 | null) => void;
   onCycleTagPreference?: (tagId: number, newMode: 'none' | 'whitelist' | 'blacklist') => void;
@@ -20,13 +19,17 @@ interface EntryCardProps {
 
 export const EntryCard = (props: EntryCardProps) => {
   const isRead = () => props.entry.is_read === 1;
-  const isStarred = () => props.entry.is_starred === 1;
   const isUntagged = () => props.entry.tagged_at === null;
   const entryTags = () => props.entry.tags ?? [];
   const thumbValue = () => props.entry.thumb;
   const isNoise = () => props.entry.depth_score !== null && props.entry.depth_score < 0.15;
   const depthLabel = () => contentLabel(props.entry.depth_score);
   const readTimeLabel = () => readTime(props.entry.word_count);
+  const targetDomain = () => {
+    const url = props.entry.target_url;
+    if (!url) return null;
+    try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return null; }
+  };
 
   // Entry is "filtered out" when it has tags and ALL tags are blacklisted
   const isFiltered = () => {
@@ -42,6 +45,7 @@ export const EntryCard = (props: EntryCardProps) => {
   };
 
   const handleOpenArticle = (e: MouseEvent) => {
+    e.preventDefault();
     e.stopPropagation();
     props.onOpenArticle(props.entry);
   };
@@ -200,16 +204,23 @@ export const EntryCard = (props: EntryCardProps) => {
                 {' · '}
                 <span>{readTimeLabel()}</span>
               </Show>
+              <Show when={targetDomain()}>
+                {' · '}
+                <span class="meta-target-link">
+                  <ExternalLink size={11} /> {targetDomain()}
+                </span>
+              </Show>
             </div>
 
             {/* Title — click to open article page */}
-            <button
+            <a
+              href={props.entry.url}
               class="article-title entry-card-expand-btn"
               onClick={handleOpenArticle}
               title="Read article (e)"
             >
               {props.entry.title}
-            </button>
+            </a>
 
             {/* Summary */}
             <Show when={displaySummary()}>
@@ -267,19 +278,6 @@ export const EntryCard = (props: EntryCardProps) => {
                 title="Trash (d)"
               >
                 <Trash2 size={16} />
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  props.onStar(props.entry.id, !isStarred());
-                }}
-                class="entry-card-star"
-                style={{
-                  color: isStarred() ? 'var(--star)' : 'var(--text-tertiary)',
-                }}
-                title={isStarred() ? 'Unstar (s)' : 'Star (s)'}
-              >
-                <Star size={16} fill={isStarred() ? 'currentColor' : 'none'} />
               </button>
             </div>
           </div>

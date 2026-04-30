@@ -29,3 +29,13 @@ dev:
 clean:
 	docker compose down -v
 	rm -rf data/
+# --- E2E Tests ---
+
+test-e2e:
+	docker compose -f e2e/docker-compose.e2e.yml up --build --abort-on-container-exit --exit-code-from playwright
+
+test-e2e-down:
+	docker compose -f e2e/docker-compose.e2e.yml down
+
+test-e2e-report:
+	open e2e/playwright-report/index.html

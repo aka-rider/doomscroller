@@ -162,17 +162,17 @@ describe('Smoke: Entry Flow', () => {
     expect(entry.is_read).toBe(1);
   });
 
-  test('starring and unstarring persists through API', async () => {
+  test('thumb up adds to favorites and thumb null removes', async () => {
     const feedId = insertTestFeed(db);
     const entryId = insertTestEntry(db, feedId);
 
-    await req(app, 'POST', `/entries/${entryId}/star`, { starred: true });
+    await req(app, 'POST', `/entries/${entryId}/thumb`, { thumb: 1 });
     let entry = await (await req(app, 'GET', `/entries/${entryId}`)).json() as any;
-    expect(entry.is_starred).toBe(1);
+    expect(entry.thumb).toBe(1);
 
-    await req(app, 'POST', `/entries/${entryId}/star`, { starred: false });
+    await req(app, 'POST', `/entries/${entryId}/thumb`, { thumb: null });
     entry = await (await req(app, 'GET', `/entries/${entryId}`)).json() as any;
-    expect(entry.is_starred).toBe(0);
+    expect(entry.thumb).toBeNull();
   });
 
   test('unread filter via API query param', async () => {
@@ -319,14 +319,14 @@ describe('Smoke: Fever API Compatibility', () => {
     expect(ids.length).toBe(2);
   });
 
-  test('?saved_item_ids returns starred entries', async () => {
+  test('?saved_item_ids returns favorited entries', async () => {
     const feedId = insertTestFeed(db);
-    const starred = insertTestEntry(db, feedId, { is_starred: 1 });
-    insertTestEntry(db, feedId, { is_starred: 0 });
+    const favorited = insertTestEntry(db, feedId, { thumb: 1 });
+    insertTestEntry(db, feedId);
 
     const res = await app.request('http://localhost/fever?api&saved_item_ids');
     const data = await res.json() as any;
-    expect(data.saved_item_ids).toBe(String(starred));
+    expect(data.saved_item_ids).toBe(String(favorited));
   });
 
   test('POST mark item as read via Fever', async () => {

@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { parseFeed } from './parser';
+import { parseFeed, detectTargetUrl } from './parser';
 import {
   RSS2_FEED, ATOM_FEED, RDF_FEED, MALFORMED_XML, EMPTY_FEED,
 } from '../test-utils';
@@ -49,6 +49,38 @@ describe('parseFeed — RSS 2.0', () => {
 
     expect(result.value.entries[0]!.guid).toBe('first-post-guid');
     expect(result.value.entries[1]!.guid).toBe('second-post-guid');
+  });
+
+  test('extracts guid from <guid isPermaLink="false"> without collapsing to [object Object]', () => {
+    const feed = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Test</title>
+    <link>https://example.com</link>
+    <item>
+      <title>First</title>
+      <link>https://example.com/1</link>
+      <guid isPermaLink="false">unique-id-1</guid>
+    </item>
+    <item>
+      <title>Second</title>
+      <link>https://example.com/2</link>
+      <guid isPermaLink="false">unique-id-2</guid>
+    </item>
+    <item>
+      <title>Third</title>
+      <link>https://example.com/3</link>
+      <guid isPermaLink="true">https://example.com/3</guid>
+    </item>
+  </channel>
+</rss>`;
+    const result = parseFeed(feed);
+    if (!result.ok) throw new Error(result.error);
+
+    expect(result.value.entries).toHaveLength(3);
+    expect(result.value.entries[0]!.guid).toBe('unique-id-1');
+    expect(result.value.entries[1]!.guid).toBe('unique-id-2');
+    expect(result.value.entries[2]!.guid).toBe('https://example.com/3');
   });
 
   test('extracts dc:creator as author', () => {
@@ -386,5 +418,103 @@ describe('parseFeed — data fidelity across the pipeline', () => {
     expect(result.value.entries[0]!.title).toBe('記事タイトル');
     expect(result.value.entries[0]!.summary).toContain('これはテストです');
     expect(result.value.entries[0]!.summary).toContain('Ελληνικά');
+  });
+});
+
+// ============================================================================
+// detectTargetUrl — Link-only entry detection
+// ============================================================================
+
+describe('detectTargetUrl', () => {
+  test('returns null for normal article content', () => {
+    const html = '<p>This is a full article with lots of meaningful content that is well over two hundred characters. It discusses many topics and has real substance that would not be mistaken for a link-only entry in an RSS aggregator.</p>';
+    expect(detectTargetUrl(html, 'https://blog.example.com/post/1', 'https://blog.example.com')).toBeNull();
+  });
+
+  test('detects external link in short content', () => {
+    const html = '<a href="https://article.example.org/story/123">Article Title</a>';
+    const result = detectTargetUrl(html, 'https://reddit.com/r/tech/abc', 'https://reddit.com');
+    expect(result).toBe('https://article.example.org/story/123');
+  });
+
+  test('ignores links to same domain as feed', () => {
+    const html = '<a href="https://reddit.com/r/tech/comments/abc">comments</a>';
+    expect(detectTargetUrl(html, 'https://reddit.com/r/tech/abc', 'https://reddit.com')).toBeNull();
+  });
+
+  test('ignores links with comment/reply paths', () => {
+    const html = '<a href="https://other.com/comments/thread">discussion</a>';
+    expect(detectTargetUrl(html, 'https://reddit.com/r/tech/abc', 'https://reddit.com')).toBeNull();
+  });
+
+  test('rejects javascript: URLs', () => {
+    const html = '<a href="javascript:alert(1)">click</a>';
+    expect(detectTargetUrl(html, 'https://hn.com/item?id=1', 'https://hn.com')).toBeNull();
+  });
+
+  test('rejects private IPs (SSRF protection)', () => {
+    const html = '<a href="http://192.168.1.1/admin">internal</a>';
+    expect(detectTargetUrl(html, 'https://reddit.com/r/x/1', 'https://reddit.com')).toBeNull();
+  });
+
+  test('rejects loopback (SSRF protection)', () => {
+    const html = '<a href="http://127.0.0.1:3000/secret">secret</a>';
+    expect(detectTargetUrl(html, 'https://reddit.com/r/x/1', 'https://reddit.com')).toBeNull();
+  });
+
+  test('rejects localhost (SSRF protection)', () => {
+    const html = '<a href="http://localhost:8080/api">api</a>';
+    expect(detectTargetUrl(html, 'https://reddit.com/r/x/1', 'https://reddit.com')).toBeNull();
+  });
+
+  test('rejects 10.x.x.x private range', () => {
+    const html = '<a href="http://10.0.0.1/internal">internal</a>';
+    expect(detectTargetUrl(html, 'https://reddit.com/r/x/1', 'https://reddit.com')).toBeNull();
+  });
+
+  test('returns null when content is long enough', () => {
+    const longText = 'a'.repeat(250);
+    const html = `<p>${longText}</p><a href="https://example.org/article">link</a>`;
+    expect(detectTargetUrl(html, 'https://reddit.com/r/x/1', 'https://reddit.com')).toBeNull();
+  });
+
+  test('Reddit-style RSS with [link] detects target', () => {
+    const xml = `<?xml version="1.0"?>
+<rss version="2.0"><channel>
+  <title>r/technology</title>
+  <link>https://www.reddit.com/r/technology/</link>
+  <item>
+    <title>Cool Article About Tech</title>
+    <link>https://www.reddit.com/r/technology/comments/abc123/cool_article/</link>
+    <guid>t3_abc123</guid>
+    <description>&lt;a href="https://arstechnica.com/science/2024/cool-article"&gt;[link]&lt;/a&gt; &lt;a href="https://www.reddit.com/r/technology/comments/abc123/cool_article/"&gt;[comments]&lt;/a&gt;</description>
+  </item>
+</channel></rss>`;
+
+    const result = parseFeed(xml);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(result.value.entries[0]!.targetUrl).toBe('https://arstechnica.com/science/2024/cool-article');
+  });
+
+  test('normal RSS article has null targetUrl', () => {
+    const xml = `<?xml version="1.0"?>
+<rss version="2.0"><channel>
+  <title>Blog</title>
+  <link>https://blog.example.com</link>
+  <item>
+    <title>My Post</title>
+    <link>https://blog.example.com/post/1</link>
+    <guid>post-1</guid>
+    <description>This is a really long article description that contains more than two hundred characters of meaningful content, discussing various topics in depth and providing value to readers who want to learn about things.</description>
+  </item>
+</channel></rss>`;
+
+    const result = parseFeed(xml);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(result.value.entries[0]!.targetUrl).toBeNull();
   });
 });

@@ -1,4 +1,4 @@
-import { createSignal, onMount, For, Show, Suspense, ErrorBoundary } from 'solid-js';
+import { createSignal, onMount, onCleanup, For, Show } from 'solid-js';
 import { api } from './lib/api';
 import type { Tag } from './lib/types';
 import type { ViewMode } from './lib/types';
@@ -13,6 +13,39 @@ import { EntriesProvider, useEntries } from './components/EntriesProvider';
 import { EntryActionsProvider, useEntryActions } from './components/EntryActionsProvider';
 import { TagActionsProvider, useTagActions } from './components/TagActionsProvider';
 
+const InfiniteScrollSentinel = () => {
+  const entriesCtx = useEntries();
+  let sentinelRef!: HTMLDivElement;
+
+  onMount(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting && entriesCtx.hasMore() && !entriesCtx.isLoadingMore()) {
+          entriesCtx.loadMore();
+        }
+      },
+      { rootMargin: '200px' }
+    );
+    observer.observe(sentinelRef);
+    onCleanup(() => observer.disconnect());
+  });
+
+  return (
+    <div ref={sentinelRef} data-testid="infinite-scroll-sentinel">
+      <Show when={entriesCtx.isLoadingMore()}>
+        <div style={{ padding: "var(--space-4)", "text-align": "center" }}>
+          <p class="meta">Loading more...</p>
+        </div>
+      </Show>
+      <Show when={!entriesCtx.hasMore() && !entriesCtx.isLoadingMore()}>
+        <div style={{ padding: "var(--space-4)", "text-align": "center" }}>
+          <p class="meta" style={{ color: "var(--text-tertiary)" }}>End of list</p>
+        </div>
+      </Show>
+    </div>
+  );
+};
+
 const AppInner = () => {
   const nav = useNavigation();
   const entriesCtx = useEntries();
@@ -20,10 +53,12 @@ const AppInner = () => {
   const tagActions = useTagActions();
 
   const handleSelectCategory = (slug: string | null) => {
+    nav.setActiveFeed(null);
     nav.setActiveCategory(slug);
   };
 
   const handleSelectView = (view: ViewMode) => {
+    nav.setActiveFeed(null);
     nav.setActiveView(view);
     if (view !== 'feed') {
       nav.setActiveCategory(null);
@@ -35,7 +70,7 @@ const AppInner = () => {
   };
 
   useKeyboard({
-    entries: () => entriesCtx.entries() ?? [],
+    entries: () => entriesCtx.entries(),
     entryActions,
     navigation: nav,
     entriesCtx,
@@ -57,54 +92,52 @@ const AppInner = () => {
           onToggleSidebar={() => nav.setSidebarOpen(!nav.sidebarOpen())}
           onCloseSidebar={() => nav.setSidebarOpen(false)}
           categoryRefetchKey={tagActions.categoryRefetchKey}
+          activeFeedId={nav.activeFeed()}
+          onRefreshComplete={() => entriesCtx.refetchEntries()}
         >
-          <ErrorBoundary fallback={(err) => (
-            <div style={{ padding: "var(--space-8)", "text-align": "center" }}>
-              <p class="meta" style={{ color: "var(--danger)" }}>Failed to load entries</p>
-              <p class="meta">{String(err)}</p>
-            </div>
-          )}>
-            <Suspense fallback={
+          <Show
+            when={!entriesCtx.loading()}
+            fallback={
               <div style={{ padding: "var(--space-8)", "text-align": "center" }}>
                 <p class="meta">Loading...</p>
               </div>
-            }>
-              <Show
-                when={(entriesCtx.entries()?.length ?? 0) > 0}
-                fallback={
-                  <div style={{ padding: "var(--space-16)", "text-align": "center" }}>
-                    <p style={{
-                      "font-family": "var(--font-serif)",
-                      "font-size": "var(--text-2xl)",
-                      color: "var(--text-tertiary)",
-                      "margin-bottom": "var(--space-4)",
-                    }}>
-                      Nothing here yet
-                    </p>
-                    <p class="meta">
-                      Add some feeds to get started.
-                    </p>
-                  </div>
-                }
-              >
-                <For each={entriesCtx.entries()}>
-                  {(entry) => (
-                    <EntryCard
-                      entry={entry}
-                      onOpenArticle={entriesCtx.openArticle}
-                      onMarkRead={entryActions.handleMarkRead}
-                      onStar={entryActions.handleStar}
-                      onTagClick={handleTagClick}
-                      onThumb={entryActions.handleThumb}
-                      onCycleTagPreference={tagActions.handleCycleTagPreference}
-                      onSwipeRead={entryActions.handleToggleRead}
-                      onSwipeTrash={(id) => entryActions.handleThumb(id, -1)}
-                    />
-                  )}
-                </For>
-              </Show>
-            </Suspense>
-          </ErrorBoundary>
+            }
+          >
+            <Show
+              when={entriesCtx.entries().length > 0}
+              fallback={
+                <div style={{ padding: "var(--space-16)", "text-align": "center" }}>
+                  <p style={{
+                    "font-family": "var(--font-serif)",
+                    "font-size": "var(--text-2xl)",
+                    color: "var(--text-tertiary)",
+                    "margin-bottom": "var(--space-4)",
+                  }}>
+                    Nothing here yet
+                  </p>
+                  <p class="meta">
+                    Add some feeds to get started.
+                  </p>
+                </div>
+              }
+            >
+              <For each={entriesCtx.entries()}>
+                {(entry) => (
+                  <EntryCard
+                    entry={entry}
+                    onOpenArticle={entriesCtx.openArticle}
+                    onMarkRead={entryActions.handleMarkRead}
+                    onTagClick={handleTagClick}
+                    onThumb={entryActions.handleThumb}
+                    onCycleTagPreference={tagActions.handleCycleTagPreference}
+                    onSwipeRead={entryActions.handleToggleRead}
+                    onSwipeTrash={(id) => entryActions.handleThumb(id, -1)}
+                  />
+                )}
+              </For>
+              <InfiniteScrollSentinel />
+            </Show>
+          </Show>
         </AppShell>
       }>
         {(article) => (
@@ -115,7 +148,6 @@ const AppInner = () => {
             nextTitle={entriesCtx.nextEntry()?.title ?? null}
             onPrev={() => entriesCtx.navigateArticle('prev')}
             onNext={() => entriesCtx.navigateArticle('next')}
-            onStar={entryActions.handleStar}
             onThumb={entryActions.handleThumb}
             onCycleTagPreference={tagActions.handleCycleTagPreference}
           />

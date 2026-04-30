@@ -18,6 +18,10 @@ export interface NavigationState {
   setShowUnreadOnly: Setter<boolean>;
   showSettings: Accessor<boolean>;
   setShowSettings: Setter<boolean>;
+  sidebarMode: Accessor<'categories' | 'feeds'>;
+  setSidebarMode: Setter<'categories' | 'feeds'>;
+  activeFeed: Accessor<number | null>;
+  setActiveFeed: Setter<number | null>;
 }
 
 const NavigationContext = createContext<NavigationState>();
@@ -30,6 +34,8 @@ export const NavigationProvider = (props: { children: JSX.Element }) => {
   const [sidebarOpen, setSidebarOpen] = createSignal(false);
   const [showUnreadOnly, setShowUnreadOnly] = createSignal(false);
   const [showSettings, setShowSettings] = createSignal(false);
+  const [sidebarMode, setSidebarMode] = createSignal<'categories' | 'feeds'>('categories');
+  const [activeFeed, setActiveFeed] = createSignal<number | null>(null);
 
   const state: NavigationState = {
     activeView,
@@ -46,6 +52,10 @@ export const NavigationProvider = (props: { children: JSX.Element }) => {
     setShowUnreadOnly,
     showSettings,
     setShowSettings,
+    sidebarMode,
+    setSidebarMode,
+    activeFeed,
+    setActiveFeed,
   };
 
   return (

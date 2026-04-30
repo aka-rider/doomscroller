@@ -56,7 +56,7 @@ const toQueryString = (opts: Record<string, string | number | boolean | null | u
 
 export const api = {
   entries: {
-    list: (opts?: { limit?: number; offset?: number; tag?: string; category?: string; unread?: boolean; filter?: string; starred?: boolean; thumb?: number; noise?: boolean }) => {
+    list: (opts?: { limit?: number; offset?: number; tag?: string; category?: string; unread?: boolean; filter?: string; favorites?: boolean; thumb?: number; noise?: boolean; feed?: number }) => {
       const qs = toQueryString({
         limit: opts?.limit,
         offset: opts?.offset,
@@ -64,9 +64,10 @@ export const api = {
         category: opts?.category,
         unread: opts?.unread,
         filter: opts?.filter,
-        starred: opts?.starred,
+        favorites: opts?.favorites,
         thumb: opts?.thumb,
         noise: opts?.noise,
+        feed: opts?.feed,
       });
       return get<EntryWithMeta[]>(`/entries${qs}`);
     },
@@ -74,7 +75,6 @@ export const api = {
     getContent: (id: number) => get<EntryContent>(`/entries/${id}/content`),
     markRead: (id: number) => post<{ ok: boolean }>(`/entries/${id}/read`),
     setRead: (id: number, isRead: boolean) => post<{ ok: boolean }>(`/entries/${id}/read`, { is_read: isRead }),
-    star: (id: number, starred: boolean) => post<{ ok: boolean }>(`/entries/${id}/star`, { starred }),
     thumb: (id: number, thumb: 1 | -1 | null) => post<{ ok: boolean }>(`/entries/${id}/thumb`, { thumb }),
   },
 
@@ -84,6 +84,7 @@ export const api = {
     list: () => get<Feed[]>('/feeds'),
     add: (url: string) => post<{ id: number }>('/feeds', { url }),
     remove: (id: number) => del<{ ok: boolean }>(`/feeds/${id}`),
+    refresh: (id: number) => post<{ ok: boolean; message: string }>(`/feeds/${id}/refresh`),
   },
 
   stats: () => get<Stats>('/stats'),
