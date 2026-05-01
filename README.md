@@ -1,5 +1,7 @@
 # Doomscroller
 
+![doom's kakodemon reading a scroll](./doom-scroll.png)
+
 Doomscroller (sarcastic) self-hosted RSS reader that helps you cut through the noise.
 
 * You pick your specific interests:
